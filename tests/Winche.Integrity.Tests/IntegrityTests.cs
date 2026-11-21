@@ -214,6 +214,18 @@ public class IntegrityTests(PostgresFixture pg)
     }
 
     [Fact]
+    public async Task A_host_without_Integrity_says_so_at_the_exchange()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        await using var app = builder.Build();
+        app.MapWincheIntegrity();
+        await app.StartAsync();
+        var r = await app.GetTestClient().PostAsJsonAsync("/integrity/v1/exchange", new { app = "x", provider = "debug", debugToken = "wdt_x" });
+        Assert.Equal("integrity-unavailable", await TestApp.ReasonOf(r));
+    }
+
+    [Fact]
     public void Links_browsers_open_and_calls_from_other_services_never_need_a_token()
     {
         foreach (var path in new[] { "/auth/v1/action", "/auth/v1/action/apply", "/auth/v1/.well-known/jwks.json", "/functions/v1/http/stripeWebhook",

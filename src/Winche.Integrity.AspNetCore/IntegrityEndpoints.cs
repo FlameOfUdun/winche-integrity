@@ -22,9 +22,10 @@ public static class IntegrityEndpoints
     /// a token.
     /// </summary>
     public static IEndpointConventionBuilder MapWincheIntegrity(this IEndpointRouteBuilder app, string prefix = "/integrity/v1") =>
-        app.MapPost($"{prefix.TrimEnd('/')}/exchange", (ExchangeRequest body, WincheIntegrity integrity) =>
+        app.MapPost($"{prefix.TrimEnd('/')}/exchange", (ExchangeRequest body, HttpContext http) =>
         {
-            if (!integrity.Available || !integrity.CanSign)
+            // Looked up rather than injected: a host that maps this without AddWincheIntegrity answers "unavailable".
+            if (http.RequestServices.GetService<WincheIntegrity>() is not { Available: true, CanSign: true } integrity)
                 return new WincheError(WincheErrorCode.FailedPrecondition, "Integrity isn't set up on this server: it needs its settings and a master key.", "integrity-unavailable").ToResult();
             if (integrity.Find(body.App?.Trim()) is not { } found)
                 return new WincheError(WincheErrorCode.NotFound, $"There's no app '{body.App}' in this project: add it under Integrity in the console.", "integrity-unknown-app").ToResult();
