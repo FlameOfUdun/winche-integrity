@@ -26,6 +26,9 @@ public sealed class WincheIntegrityOptions
 
     /// <summary>The root App Attest attestations must chain to: Apple's (tests make their own).</summary>
     internal System.Security.Cryptography.X509Certificates.X509Certificate2? AppAttestRoot { get; set; }
+
+    /// <summary>How Google is called (tests answer for it).</summary>
+    internal HttpClient? PlayIntegrityHttp { get; set; }
 }
 
 /// <summary>
@@ -36,6 +39,9 @@ public sealed class WincheIntegrityOptions
 /// </summary>
 public sealed class WincheIntegrity(IServiceProvider services, WincheIntegrityOptions options, TimeProvider? time = null)
 {
+    /// <summary>The project secret with the Google service account's key file (JSON), for Play Integrity.</summary>
+    public const string PlayServiceAccountSecret = "integrity.playIntegrity.serviceAccount";
+
     private const string TokenPrefix = "wit1.", DebugPrefix = "wdt_";
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 

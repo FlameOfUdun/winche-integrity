@@ -11,7 +11,7 @@ How an app proves itself:
 | --- | --- | --- |
 | Simulators, emulators, desktop builds, CI | a **debug token** made in the console | now |
 | iOS 14+, macOS 11+ | Apple App Attest (`winche_app_attest` for Flutter) | now |
-| Android | Google Play Integrity | to come |
+| Android 6+ (with Google Play) | Google Play Integrity, standard API (`winche_integrity` for Flutter) | now |
 | Web | a browser check | to come |
 
 Windows and Linux have no proof an app can give of itself: they use debug tokens.
@@ -45,6 +45,9 @@ Winche Server does this for every project; its console's **Integrity** page chan
 - **Apps**: each with an id (it goes in the app's `winche_options.dart`), a name, and what identifies it on each platform:
   Android package, Apple bundle id and team id (App Attest needs both), and whether App Attest keys from development
   builds (run from Xcode) are accepted besides TestFlight and App Store ones (`appleDevelopment`, off by default).
+  Android: the Google Cloud project number Play Integrity runs under, whether builds Google Play doesn't know are
+  accepted (`androidSideloaded`, off), how good the device must be (`androidDeviceIntegrity`: `basic`, `device` (the
+  default) or `strong`), and optionally the signing certificates (SHA-256, base64url, as Play Console shows them).
 - **Enforcement**, per product: `off` (not checked), `monitor` (the default: checked and counted, never refused) or
   `enforce` (refused without a valid token: `permission-denied`, reason `integrity-required`). Watch the counts in
   monitor first, then enforce once your apps all send tokens.
@@ -69,6 +72,15 @@ SHA-256): the chain, the challenge in the credential certificate, the key id, th
 environment and a zero counter; then keeps the device's public key (`winche_integrity_keys`). An assertion must be
 signed by a kept key, for this challenge and app, with its counter above the last: a replay is refused. A key the
 project doesn't know answers `integrity-unknown-key`, and the app attests a new one. Removing an app forgets its keys.
+
+With Play Integrity, the challenge's answer also carries the app's `androidCloudProjectNumber` (the app prepares
+Play Integrity with it), and the app sends `{ app, provider: "playIntegrity", challenge, token }`, the token requested
+with `requestHash` = SHA-256 of the challenge's UTF-8, lower-case hex. The server has Google decode it
+(`decodeIntegrityToken`, signed in as the project's **Google service account**: its key file in the project secret
+`integrity.playIntegrity.serviceAccount`, with the Play Integrity API on and its Cloud project linked to the app in Play
+Console), then checks the request (package, request hash, made within 7 minutes), the app (`PLAY_RECOGNIZED`, or with
+`androidSideloaded` anything but `UNEVALUATED`; the certificate when set) and the device (the app's level). Google being
+down is `integrity-unavailable`; a service account it refuses is `integrity-not-set-up`.
 
 The app sends the token in `X-Winche-Integrity` (on WebSockets, the query parameter `winche_integrity`) and gets a new
 one before it expires. The Winche SDKs do all of this.

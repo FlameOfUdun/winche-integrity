@@ -19,11 +19,11 @@ public static class IntegrityEndpoints
     /// or an assertion with it (base64, every time after).
     /// </summary>
     public sealed record ExchangeRequest(string? App, string? Provider, string? DebugToken = null,
-        string? KeyId = null, string? Challenge = null, string? Attestation = null, string? Assertion = null);
+        string? KeyId = null, string? Challenge = null, string? Attestation = null, string? Assertion = null, string? Token = null);
 
     public sealed record ChallengeRequest(string? App);
 
-    private const string Providers = "debug or appAttest";
+    private const string Providers = "debug, appAttest or playIntegrity";
 
     private static IResult Error(WincheErrorCode code, string message, string reason) => new WincheError(code, message, reason).ToResult();
 
@@ -45,7 +45,8 @@ public static class IntegrityEndpoints
             if (integrity.Find(body.App?.Trim()) is not { } found)
                 return Error(WincheErrorCode.NotFound, $"There's no app '{body.App}' in this project: add it under Integrity in the console.", "integrity-unknown-app");
             var (challenge, expires) = await http.RequestServices.GetRequiredService<IntegrityStore>().NewChallengeAsync(found.Id, ct);
-            return Results.Json(new { challenge, expiresAt = expires });
+            // Play Integrity asks the app for its Google Cloud project number: it comes from here, not the app's options.
+            return Results.Json(new { challenge, expiresAt = expires, androidCloudProjectNumber = found.AndroidCloudProjectNumber });
         });
 
         group.MapPost("/exchange", async (ExchangeRequest body, HttpContext http, CancellationToken ct) =>
@@ -63,6 +64,8 @@ public static class IntegrityEndpoints
                     return Results.Json(new { token, expiresAt = expires });
                 case "appAttest":
                     return await AppAttestAsync(body, found, integrity, http.RequestServices, ct);
+                case "playIntegrity":
+                    return await PlayIntegrityAsync(body, found, integrity, http.RequestServices, ct);
                 case null or "":
                     return Error(WincheErrorCode.InvalidArgument, $"Say how the app proves itself (provider): {Providers}.", "integrity-provider");
                 default:
@@ -77,6 +80,43 @@ public static class IntegrityEndpoints
         http.RequestServices.GetService<WincheIntegrity>() is { Available: true, CanSign: true } && http.RequestServices.GetService<IntegrityStore>() is { Available: true }
             ? null
             : Error(WincheErrorCode.FailedPrecondition, "Integrity isn't set up on this server: it needs its settings, a master key and the config database.", "integrity-unavailable");
+
+    /// <summary>
+    /// Play Integrity (standard API): the challenge is used up, then Google decodes the token (with the project's
+    /// service account) and its request, app and device verdicts are checked. The app's request hash is SHA-256 of the
+    /// challenge, hex.
+    /// </summary>
+    private static async Task<IResult> PlayIntegrityAsync(ExchangeRequest body, IntegrityApp app, WincheIntegrity integrity, IServiceProvider services, CancellationToken ct)
+    {
+        if (app.AndroidPackage is null)
+            return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Android package: set it under Integrity to use Play Integrity.", "integrity-not-set-up");
+        var secrets = services.GetService<Winche.Secrets.SecretStore>();
+        var account = secrets is { Available: true } ? PlayIntegrity.GoogleServiceAccount.Parse(await secrets.GetAsync(WincheIntegrity.PlayServiceAccountSecret, ct)) : null;
+        if (account is null)
+            return Error(WincheErrorCode.FailedPrecondition, "This project has no Google service account for Play Integrity: set its key file under Integrity.", "integrity-not-set-up");
+        if (string.IsNullOrWhiteSpace(body.Token) || body.Token.Length > 20_000)
+            return Error(WincheErrorCode.InvalidArgument, "Play Integrity needs the token the app got (token) and the challenge.", "integrity-proof");
+        if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
+            return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
+        try
+        {
+            await services.GetRequiredService<PlayIntegrity.PlayIntegrityVerifier>().VerifyAsync(body.Token, body.Challenge!, app, account, ct);
+        }
+        catch (PlayIntegrity.PlayIntegrityException e) when (e.Retryable)
+        {
+            return Error(WincheErrorCode.Unavailable, $"Play Integrity couldn't be checked: {e.Message}", "integrity-unavailable");
+        }
+        catch (PlayIntegrity.PlayIntegrityException e) when (e.Reason == "google")
+        {
+            return Error(WincheErrorCode.FailedPrecondition, $"Play Integrity isn't set up right: {e.Message}", "integrity-not-set-up");
+        }
+        catch (PlayIntegrity.PlayIntegrityException e)
+        {
+            return Error(WincheErrorCode.PermissionDenied, $"Play Integrity refused it: {e.Message}", "integrity-rejected");
+        }
+        var (token, expires) = integrity.Issue(app.Id, "playIntegrity");
+        return Results.Json(new { token, expiresAt = expires });
+    }
 
     /// <summary>
     /// App Attest: the challenge is used up, then the attestation (a new key: kept) or the assertion (a kept key: its

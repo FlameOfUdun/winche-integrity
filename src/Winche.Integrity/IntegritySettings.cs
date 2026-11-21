@@ -14,6 +14,14 @@ public sealed record IntegrityApp
     public string Sdk { get; init; } = "flutter";
     /// <summary>Android: the package name (com.example.app), for Play Integrity.</summary>
     public string? AndroidPackage { get; init; }
+    /// <summary>Android: the Google Cloud project number Play Integrity asks for (the app gets it with each challenge).</summary>
+    public long? AndroidCloudProjectNumber { get; init; }
+    /// <summary>Android: also accept builds Google Play doesn't know (installed some other way, internal builds). Off by default.</summary>
+    public bool AndroidSideloaded { get; init; }
+    /// <summary>Android: how good the device must be: <c>basic</c>, <c>device</c> (the default) or <c>strong</c>.</summary>
+    public string AndroidDeviceIntegrity { get; init; } = "device";
+    /// <summary>Android: when set, the app must be signed with one of these certificates (SHA-256, base64url, as Play Console shows).</summary>
+    public IReadOnlyList<string> AndroidCertificates { get; init; } = [];
     /// <summary>Apple (iOS, macOS): the bundle id (com.example.app), for App Attest.</summary>
     public string? AppleBundleId { get; init; }
     /// <summary>Apple: the developer team id (10 letters and digits), for App Attest.</summary>
@@ -99,6 +107,10 @@ public sealed partial record IntegritySettings
         if (a.AndroidPackage is { } pkg && !AndroidPackageRx().IsMatch(pkg)) yield return $"'{pkg}' isn't an Android package name (like com.example.app).";
         if (a.AppleBundleId is { } bundle && !BundleRx().IsMatch(bundle)) yield return $"'{bundle}' isn't a bundle id (like com.example.app).";
         if (a.AppleTeamId is { } team && !TeamRx().IsMatch(team)) yield return $"'{team}' isn't an Apple team id (10 capital letters and digits, like ABCDE12345).";
+        if (a.AndroidCloudProjectNumber is <= 0) yield return "A Google Cloud project number is a positive number (Google Cloud console → the project's dashboard).";
+        if (a.AndroidDeviceIntegrity is not ("basic" or "device" or "strong")) yield return $"'{a.AndroidDeviceIntegrity}' isn't a device integrity level: basic, device or strong.";
+        foreach (var c in a.AndroidCertificates)
+            if (!CertificateRx().IsMatch(c)) yield return $"'{c}' isn't a certificate's SHA-256 (43 base64url characters, as Play Console shows it).";
     }
 
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$")]
@@ -109,4 +121,7 @@ public sealed partial record IntegritySettings
 
     [GeneratedRegex(@"^[A-Z0-9]{10}$")]
     private static partial Regex TeamRx();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{43}$")]
+    private static partial Regex CertificateRx();
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Winche.Core;
+using Winche.Secrets;
 
 namespace Winche.Integrity;
 
@@ -21,6 +22,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IntegrityUsage>();
         services.TryAddSingleton<IntegrityStore>();
         services.TryAddSingleton(sp => new AppAttest.AppAttestVerifier(options.AppAttestRoot, sp.GetService<TimeProvider>()));
+        services.TryAddSingleton(sp => new PlayIntegrity.PlayIntegrityVerifier(options.PlayIntegrityHttp, sp.GetService<TimeProvider>()));
+        services.AddWincheSecrets();   // the Google service account
         services.AddHostedService<IntegrityUsageFlusher>();
         return services;
     }
