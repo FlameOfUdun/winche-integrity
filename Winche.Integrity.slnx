@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Winche.Integrity/Winche.Integrity.csproj" />
+    <Project Path="src/Winche.Integrity.AspNetCore/Winche.Integrity.AspNetCore.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Winche.Integrity.Tests/Winche.Integrity.Tests.csproj" />
+  </Folder>
+</Solution>

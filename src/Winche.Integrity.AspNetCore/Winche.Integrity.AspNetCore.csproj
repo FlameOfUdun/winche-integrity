@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Winche.Integrity.AspNetCore</PackageId>
+    <RootNamespace>Winche.Integrity.AspNetCore</RootNamespace>
+    <PackageDescription>Winche Integrity for ASP.NET Core: the apps' token exchange (/integrity/v1/exchange) and the check each product's API makes (count, refuse where enforced).</PackageDescription>
+    <PackageTags>attestation;app-integrity;security;aspnetcore</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Winche.Core" Version="2.0.0" />
+    <PackageReference Include="Winche.Core.AspNetCore" Version="2.0.0" />
+    <ProjectReference Include="..\Winche.Integrity\Winche.Integrity.csproj" />
+  </ItemGroup>
+</Project>
