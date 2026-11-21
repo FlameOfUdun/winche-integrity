@@ -18,6 +18,11 @@ public sealed record IntegrityApp
     public string? AppleBundleId { get; init; }
     /// <summary>Apple: the developer team id (10 letters and digits), for App Attest.</summary>
     public string? AppleTeamId { get; init; }
+    /// <summary>
+    /// Apple: also accept App Attest keys from development builds (run from Xcode), besides TestFlight and App Store
+    /// ones. Off by default.
+    /// </summary>
+    public bool AppleDevelopment { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
 }
 

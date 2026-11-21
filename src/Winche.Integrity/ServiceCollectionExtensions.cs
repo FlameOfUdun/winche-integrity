@@ -19,6 +19,8 @@ public static class ServiceCollectionExtensions
         services.AddWincheSettingsArea(IntegritySettings.Area, "Integrity", new IntegritySettings(), s => s.Problems());
         services.TryAddSingleton<WincheIntegrity>();
         services.TryAddSingleton<IntegrityUsage>();
+        services.TryAddSingleton<IntegrityStore>();
+        services.TryAddSingleton(sp => new AppAttest.AppAttestVerifier(options.AppAttestRoot, sp.GetService<TimeProvider>()));
         services.AddHostedService<IntegrityUsageFlusher>();
         return services;
     }

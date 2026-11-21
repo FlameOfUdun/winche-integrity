@@ -23,6 +23,9 @@ public sealed class WincheIntegrityOptions
     /// Apps to start with until the settings are first saved (a host's apps from before Integrity); none by default.
     /// </summary>
     public Func<IServiceProvider, IReadOnlyList<IntegrityApp>>? CarryOverApps { get; set; }
+
+    /// <summary>The root App Attest attestations must chain to: Apple's (tests make their own).</summary>
+    internal System.Security.Cryptography.X509Certificates.X509Certificate2? AppAttestRoot { get; set; }
 }
 
 /// <summary>

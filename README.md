@@ -10,7 +10,7 @@ How an app proves itself:
 | Platform | Proof | |
 | --- | --- | --- |
 | Simulators, emulators, desktop builds, CI | a **debug token** made in the console | now |
-| iOS, macOS | Apple App Attest | to come |
+| iOS 14+, macOS 11+ | Apple App Attest (`winche_app_attest` for Flutter) | now |
 | Android | Google Play Integrity | to come |
 | Web | a browser check | to come |
 
@@ -43,7 +43,8 @@ Winche Server does this for every project; its console's **Integrity** page chan
 ### Settings (area `integrity`)
 
 - **Apps**: each with an id (it goes in the app's `winche_options.dart`), a name, and what identifies it on each platform:
-  Android package, Apple bundle id and team id.
+  Android package, Apple bundle id and team id (App Attest needs both), and whether App Attest keys from development
+  builds (run from Xcode) are accepted besides TestFlight and App Store ones (`appleDevelopment`, off by default).
 - **Enforcement**, per product: `off` (not checked), `monitor` (the default: checked and counted, never refused) or
   `enforce` (refused without a valid token: `permission-denied`, reason `integrity-required`). Watch the counts in
   monitor first, then enforce once your apps all send tokens.
@@ -59,6 +60,15 @@ POST /integrity/v1/exchange
 
 200 { "token": "wit1.…", "expiresAt": "2026-11-21T15:00:00Z" }
 ```
+
+With App Attest, the app first asks for a challenge (`POST /integrity/v1/challenge { "app" }` → `{ challenge,
+expiresAt }`: one use, 5 minutes), then sends `{ app, provider: "appAttest", keyId, challenge, attestation }` the
+first time (the key's attestation, base64, made for SHA-256 of the challenge's UTF-8) and `{ …, assertion }` every
+time after. The server checks the attestation against Apple's App Attestation root (embedded, checked by its
+SHA-256): the chain, the challenge in the credential certificate, the key id, the App ID (team id and bundle id), the
+environment and a zero counter; then keeps the device's public key (`winche_integrity_keys`). An assertion must be
+signed by a kept key, for this challenge and app, with its counter above the last: a replay is refused. A key the
+project doesn't know answers `integrity-unknown-key`, and the app attests a new one. Removing an app forgets its keys.
 
 The app sends the token in `X-Winche-Integrity` (on WebSockets, the query parameter `winche_integrity`) and gets a new
 one before it expires. The Winche SDKs do all of this.
