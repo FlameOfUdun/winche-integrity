@@ -97,11 +97,11 @@ public sealed class WincheIntegrity(IServiceProvider services, WincheIntegrityOp
         return prefix + string.Concat(RandomNumberGenerator.GetItems<char>(alphabet, 12));
     }
 
-    /// <summary>Saves <paramref name="next"/> as a new version of the settings (with who and why, for the history).</summary>
-    public async Task SaveAsync(IntegritySettings next, string? by, string reason, CancellationToken ct = default)
+    /// <summary>Saves <paramref name="next"/> as a new version of the settings (with who and why, for the history): the version made.</summary>
+    public async Task<SettingsVersion> SaveAsync(IntegritySettings next, string? by, string reason, CancellationToken ct = default)
     {
         var store = services.GetRequiredService<SettingsStore>();
-        await store.SaveAsync(IntegritySettings.Area, JsonSerializer.SerializeToNode(next, SettingsArea.Json)!, by, reason, ct);
+        return await store.SaveAsync(IntegritySettings.Area, JsonSerializer.SerializeToNode(next, SettingsArea.Json)!, by, reason, ct);
     }
 
     // ---- Debug tokens ----
