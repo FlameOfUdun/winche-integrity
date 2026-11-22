@@ -17,6 +17,7 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
     public const int MaxCallers = 100_000;
 
     private readonly ConcurrentDictionary<string, Window> _windows = new();
+    private int _count;   // about how many windows there are (ConcurrentDictionary.Count takes every lock)
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private long _cleared;
 
@@ -30,7 +31,7 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
         var minute = Minute();
         var key = "ip:" + CallerOf(address);
         // Past the cap, callers not yet counted share one window with room for many of them.
-        if (_windows.Count >= MaxCallers && !_windows.ContainsKey(key)) return Take("ip:overflow", minute, (long)limit * 1000);
+        if (Volatile.Read(ref _count) >= MaxCallers && !_windows.ContainsKey(key)) return Take("ip:overflow", minute, (long)limit * 1000);
         return Take(key, minute, limit);
     }
 
@@ -60,14 +61,14 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
         var cleared = Interlocked.Read(ref _cleared);
         if (minute > cleared && Interlocked.CompareExchange(ref _cleared, minute, cleared) == cleared)
             foreach (var (k, w) in _windows)
-                if (!k.StartsWith("play-day:", StringComparison.Ordinal) && w.Period < minute) _windows.TryRemove(new KeyValuePair<string, Window>(k, w));
-                else if (k.StartsWith("play-day:", StringComparison.Ordinal) && w.Period < minute / 1440) _windows.TryRemove(new KeyValuePair<string, Window>(k, w));
+                if (!k.StartsWith("play-day:", StringComparison.Ordinal) && w.Period < minute) { if (_windows.TryRemove(new KeyValuePair<string, Window>(k, w))) Interlocked.Decrement(ref _count); }
+                else if (k.StartsWith("play-day:", StringComparison.Ordinal) && w.Period < minute / 1440) { if (_windows.TryRemove(new KeyValuePair<string, Window>(k, w))) Interlocked.Decrement(ref _count); }
         return minute;
     }
 
     private bool Take(string key, long period, long limit)
     {
-        var window = _windows.AddOrUpdate(key, _ => new Window(period), (_, w) => w.Period == period ? w : new Window(period));
+        var window = _windows.AddOrUpdate(key, _ => { Interlocked.Increment(ref _count); return new Window(period); }, (_, w) => w.Period == period ? w : new Window(period));
         return Interlocked.Increment(ref window.Count) <= limit;
     }
 }

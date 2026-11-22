@@ -30,6 +30,10 @@ public static class IntegrityEndpoints
 
     private static IResult Error(WincheErrorCode code, string message, string reason) => new WincheError(code, message, reason).ToResult();
 
+    /// <summary>A secret the provider needs (it may be read from AWS: that can fail, said as a reference error), or null.</summary>
+    private static async Task<string?> SecretAsync(IServiceProvider services, string name, CancellationToken ct) =>
+        services.GetService<Winche.Secrets.SecretStore>() is { Available: true } secrets ? await secrets.GetAsync(name, ct) : null;
+
     private static IResult UnknownApp() =>
         Error(WincheErrorCode.NotFound, "There's no such app in this project: add it under Integrity in the console.", "integrity-unknown-app");
 
@@ -127,8 +131,9 @@ public static class IntegrityEndpoints
         var services = http.RequestServices;
         if (app.WebSiteKey is null)
             return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Turnstile site key: set it under Integrity to use the browser check.", "integrity-not-set-up");
-        var secrets = services.GetService<Winche.Secrets.SecretStore>();
-        var secret = secrets is { Available: true } ? await secrets.GetAsync(WincheIntegrity.TurnstileSecret(app.Id), ct) : null;
+        string? secret;
+        try { secret = await SecretAsync(services, WincheIntegrity.TurnstileSecret(app.Id), ct); }
+        catch (Winche.Secrets.SecretReferenceException e) { return NotSetUp(services, app, "The browser check", e.Message, unavailable: e.Code == "unavailable"); }
         if (string.IsNullOrEmpty(secret))
             return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Turnstile secret key: set it under Integrity.", "integrity-not-set-up");
         if (IntegritySettings.TestSecretRx().IsMatch(secret.Trim()))
@@ -168,8 +173,9 @@ public static class IntegrityEndpoints
         var services = http.RequestServices;
         if (app.AndroidPackage is null)
             return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Android package: set it under Integrity to use Play Integrity.", "integrity-not-set-up");
-        var secrets = services.GetService<Winche.Secrets.SecretStore>();
-        var account = secrets is { Available: true } ? PlayIntegrity.GoogleServiceAccount.Parse(await secrets.GetAsync(WincheIntegrity.PlayServiceAccountSecret, ct)) : null;
+        PlayIntegrity.GoogleServiceAccount? account;
+        try { account = PlayIntegrity.GoogleServiceAccount.Parse(await SecretAsync(services, WincheIntegrity.PlayServiceAccountSecret, ct)); }
+        catch (Winche.Secrets.SecretReferenceException e) { return NotSetUp(services, app, "Play Integrity", e.Message, unavailable: e.Code == "unavailable"); }
         if (account is null)
             return Error(WincheErrorCode.FailedPrecondition, "This project has no Google service account for Play Integrity: set its key file under Integrity.", "integrity-not-set-up");
         if (string.IsNullOrWhiteSpace(body.Token) || body.Token.Length > 20_000)
