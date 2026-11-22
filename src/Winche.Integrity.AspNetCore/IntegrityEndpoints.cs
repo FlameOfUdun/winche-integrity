@@ -202,13 +202,15 @@ public static class IntegrityEndpoints
     }
 
     /// <summary>
-    /// Addresses under a product's path that never need a token: what browsers open from a link (email actions), what
+    /// Addresses under a product's path that never need a token: what browsers open from a link (email actions) or an
+    /// image (users' photos), what
     /// other services call (identity providers' notices, HTTP functions such as webhooks), and the key set tokens are
     /// checked with.
     /// </summary>
     public static bool IsExempt(PathString path)
     {
-        if (path.StartsWithSegments("/auth/v1/action") || path.StartsWithSegments("/auth/v1/.well-known") || path.StartsWithSegments("/functions/v1/http"))
+        if (path.StartsWithSegments("/auth/v1/action") || path.StartsWithSegments("/auth/v1/.well-known") || path.StartsWithSegments("/functions/v1/http")
+            || path.StartsWithSegments("/auth/v1/photos"))   // users' photos: <img> tags can't send a token
             return true;
         // /auth/v1/providers/{name}/backchannel-logout and …/changed: the provider's own server calls them.
         var p = path.Value ?? "";

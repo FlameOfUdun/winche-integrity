@@ -100,7 +100,8 @@ with the same master key, for that project. After a master key change, tokens si
 
 ### What's never checked
 
-Addresses browsers open from a link or other services call: email action links (`/auth/v1/action`), the key set
+Addresses browsers open from a link or an image, or other services call: email action links (`/auth/v1/action`), users'
+photos (`/auth/v1/photos`), the key set
 (`/auth/v1/.well-known`), identity providers' notices (`/auth/v1/providers/{name}/backchannel-logout`, `…/changed`),
 HTTP functions (`/functions/v1/http/…`, such as webhooks), and CORS preflights. Signed file links are the host's to leave
 out.
