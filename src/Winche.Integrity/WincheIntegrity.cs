@@ -27,13 +27,14 @@ public sealed class WincheIntegrityOptions
     /// <summary>The root App Attest attestations must chain to: Apple's (tests make their own).</summary>
     internal System.Security.Cryptography.X509Certificates.X509Certificate2? AppAttestRoot { get; set; }
 
-    /// <summary>
-    /// Challenges and proofs each address may ask for a minute (each can cost a call to Google or Cloudflare); 0: no
-    /// limit. Default 30.
-    /// </summary>
+    /// <summary>Challenges and proofs each caller's address may ask for a minute (0: no limit). Default 30.</summary>
     public int AttemptsPerMinutePerAddress { get; set; } = 30;
 
-    /// <summary>Challenges and proofs per app a minute, from every address together (0: no limit). Default 600.</summary>
+    /// <summary>
+    /// Proofs that cost a call to Google or Cloudflare (Play Integrity, Turnstile) per app a minute, from every address
+    /// together, counted only once a challenge was used (0: no limit). Default 600. App Attest and debug tokens are
+    /// checked here, so only the per-address limit applies to them.
+    /// </summary>
     public int AttemptsPerMinutePerApp { get; set; } = 600;
 
     /// <summary>How Google is called (tests answer for it).</summary>

@@ -107,7 +107,7 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
         {
             throw new PlayIntegrityException("google", $"Google can't be reached: {e.Message}", retryable: true);
         }
-        catch (JsonException) { throw new PlayIntegrityException("google", "Google's answer can't be read."); }
+        catch (Exception e) when (e is JsonException or InvalidOperationException) { throw new PlayIntegrityException("google", "Google's answer can't be read.", retryable: true); }
 
         try
         {
@@ -132,6 +132,10 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
             if (recognition == "UNEVALUATED") throw new PlayIntegrityException("app", "Google couldn't tell which app made the token (the device may be compromised).");
             if (recognition != "PLAY_RECOGNIZED" && !app.AndroidSideloaded)
                 throw new PlayIntegrityException("app", "The app isn't a build Google Play knows (installed some other way, or changed). Accept builds from elsewhere for the app to allow it.");
+            // A build Google Play doesn't know passes only when signed with one of the app's certificates (settings saved
+            // before that rule may lack one: then only Play's own builds pass).
+            if (recognition != "PLAY_RECOGNIZED" && app.AndroidCertificates.Count == 0)
+                throw new PlayIntegrityException("app", "The app isn't a build Google Play knows, and it has no signing certificate set to accept others by.");
             if (app.AndroidCertificates.Count > 0)
             {
                 var digests = appIntegrity?["certificateSha256Digest"]?.AsArray().Select(d => d?.GetValue<string>()).ToList() ?? [];
@@ -140,7 +144,7 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
             }
 
             // The device: at least the app's level.
-            var device = payload["deviceIntegrity"]?["deviceRecognitionVerdict"]?.AsArray().Select(d => d!.GetValue<string>()).ToList() ?? [];
+            var device = payload["deviceIntegrity"]?["deviceRecognitionVerdict"]?.AsArray().Select(d => d?.GetValue<string>()).OfType<string>().ToList() ?? [];
             if (!device.Any(Levels[app.AndroidDeviceIntegrity].Contains))
                 throw new PlayIntegrityException("device", device.Count == 0
                     ? "The device doesn't pass Google's integrity checks (rooted, an emulator, or a token decoded before)."
@@ -195,12 +199,14 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
         {
             throw new PlayIntegrityException("google", $"Google can't be reached: {e.Message}", retryable: true);
         }
-        catch (JsonException) { throw new PlayIntegrityException("google", "Google's sign-in answer can't be read."); }
+        catch (Exception e) when (e is JsonException or InvalidOperationException) { throw new PlayIntegrityException("google", "Google's sign-in answer can't be read.", retryable: true); }
     }
 
     private static string GoogleMessage(string text)
     {
-        try { return JsonNode.Parse(text)?["error"] is { } e ? (e["message"]?.GetValue<string>() ?? e.GetValue<string>()) : text; }
-        catch (Exception) { return text.Length > 200 ? text[..200] : text; }
+        string said;
+        try { said = JsonNode.Parse(text)?["error"] is { } e ? (e["message"]?.GetValue<string>() ?? e.GetValue<string>()) : text; }
+        catch (Exception) { said = text; }
+        return said.Length > 200 ? said[..200] + "…" : said;
     }
 }

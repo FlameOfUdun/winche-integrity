@@ -163,6 +163,14 @@ public class PlayIntegrityTests(PostgresFixture pg)
         Assert.Contains("isn't signed with one of its certificates", await resigned.Content.ReadAsStringAsync());
         // Google not knowing which app it is is never accepted, whatever the certificate.
         Assert.Contains("couldn't tell which app", await (await ProveAsync(app, google, c => FakeGoogle.Verdict(c, now, recognition: "UNEVALUATED", certificates: [ours]))).Content.ReadAsStringAsync());
+
+        // Settings from before sideloading needed a certificate (never checked again on load): only Play's builds pass.
+        var verifier = new PlayIntegrityVerifier(new HttpClient(google), app.Clock);
+        var old = new IntegrityApp { Id = "clinic-app", Name = "Clinic", AndroidPackage = "com.example.clinic", AndroidSideloaded = true };
+        google.Verdicts["old-settings"] = FakeGoogle.Verdict("c-1", now, recognition: "UNRECOGNIZED_VERSION");
+        var refused = await Assert.ThrowsAsync<PlayIntegrityException>(() =>
+            verifier.VerifyAsync("old-settings", "c-1", old, GoogleServiceAccount.Parse(google.ServiceAccountJson)!, CancellationToken.None));
+        Assert.Contains("no signing certificate", refused.Message);
     }
 
     [Fact]

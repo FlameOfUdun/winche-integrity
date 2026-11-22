@@ -21,6 +21,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<WincheIntegrity>();
         services.TryAddSingleton<IntegrityUsage>();
         services.TryAddSingleton<IntegrityStore>();
+        services.TryAddSingleton(sp => new IntegrityLimiter(options, sp.GetService<TimeProvider>()));
         services.TryAddSingleton(sp => new AppAttest.AppAttestVerifier(options.AppAttestRoot, sp.GetService<TimeProvider>()));
         services.TryAddSingleton(sp => new PlayIntegrity.PlayIntegrityVerifier(options.PlayIntegrityHttp, sp.GetService<TimeProvider>()));
         services.TryAddSingleton(sp => new Turnstile.TurnstileVerifier(options.TurnstileHttp, sp.GetService<TimeProvider>()));

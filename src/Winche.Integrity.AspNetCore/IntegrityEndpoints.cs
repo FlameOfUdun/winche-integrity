@@ -33,11 +33,7 @@ public static class IntegrityEndpoints
     private static IResult UnknownApp() =>
         Error(WincheErrorCode.NotFound, "There's no such app in this project: add it under Integrity in the console.", "integrity-unknown-app");
 
-    /// <summary>One limiter per Integrity set-up (a project's options), made when first needed.</summary>
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<WincheIntegrityOptions, IntegrityLimiter> Limiters = new();
-
-    private static IntegrityLimiter LimiterOf(HttpContext http) =>
-        Limiters.GetValue(http.RequestServices.GetRequiredService<WincheIntegrityOptions>(), o => new IntegrityLimiter(o));
+    private static IntegrityLimiter LimiterOf(HttpContext http) => http.RequestServices.GetRequiredService<IntegrityLimiter>();
 
     private static IResult TooMany(HttpContext http)
     {
@@ -53,6 +49,10 @@ public static class IntegrityEndpoints
     /// The server's side of why a provider couldn't be used (a service account's address, Google's or Cloudflare's own
     /// words): logged for the project's admins, never told to whoever called.
     /// </summary>
+    private static void Log(IServiceProvider services, IntegrityApp app, string provider, string detail) =>
+        services.GetService<ILoggerFactory>()?.CreateLogger("Winche.Integrity")
+            .LogInformation("Integrity: {Provider} refused a token for the app {App}: {Detail}", provider, app.Id, detail);
+
     private static IResult NotSetUp(IServiceProvider services, IntegrityApp app, string provider, string detail, bool unavailable)
     {
         services.GetService<ILoggerFactory>()?.CreateLogger("Winche.Integrity")
@@ -64,9 +64,10 @@ public static class IntegrityEndpoints
 
     /// <summary>
     /// Maps the apps' side of Integrity under <paramref name="prefix"/> (default <c>/integrity/v1</c>):
-    /// <c>POST challenge</c> (<c>{ app }</c> → <c>{ challenge, expiresAt }</c>, one use, for App Attest) and
-    /// <c>POST exchange</c>, where an app trades proof that it's the project's own for an Integrity token,
-    /// <c>{ token, expiresAt }</c>. Anyone may call them; only proof gets a token.
+    /// <c>POST challenge</c> (<c>{ app }</c> → <c>{ challenge, expiresAt, androidCloudProjectNumber, webSiteKey }</c>,
+    /// one use, for App Attest, Play Integrity and Turnstile) and <c>POST exchange</c>, where an app trades proof that
+    /// it's the project's own for an Integrity token, <c>{ token, expiresAt, expiresIn }</c>. Anyone may call them
+    /// (limited per address, and per app for proofs that cost a call to Google or Cloudflare); only proof gets a token.
     /// </summary>
     public static RouteGroupBuilder MapWincheIntegrity(this IEndpointRouteBuilder app, string prefix = "/integrity/v1")
     {
@@ -78,7 +79,7 @@ public static class IntegrityEndpoints
             if (Unavailable(http) is { } no) return no;
             var integrity = http.RequestServices.GetRequiredService<WincheIntegrity>();
             if (integrity.Find(body.App?.Trim()) is not { } found) return UnknownApp();
-            if (!LimiterOf(http).TryTake(http.Connection.RemoteIpAddress?.ToString(), found.Id)) return TooMany(http);
+            if (!LimiterOf(http).TryTakeAddress(http.Connection.RemoteIpAddress?.ToString())) return TooMany(http);
             var (challenge, expires) = await http.RequestServices.GetRequiredService<IntegrityStore>().NewChallengeAsync(found.Id, ct);
             // Play Integrity asks the app for its Google Cloud project number, Turnstile for its site key: they come from here, not the app's options.
             return Results.Json(new { challenge, expiresAt = expires, androidCloudProjectNumber = found.AndroidCloudProjectNumber, webSiteKey = found.WebSiteKey });
@@ -89,7 +90,7 @@ public static class IntegrityEndpoints
             if (Unavailable(http) is { } no) return no;
             var integrity = http.RequestServices.GetRequiredService<WincheIntegrity>();
             if (integrity.Find(body.App?.Trim()) is not { } found) return UnknownApp();
-            if (!LimiterOf(http).TryTake(http.Connection.RemoteIpAddress?.ToString(), found.Id)) return TooMany(http);
+            if (!LimiterOf(http).TryTakeAddress(http.Connection.RemoteIpAddress?.ToString())) return TooMany(http);
             switch (body.Provider)
             {
                 case "debug":
@@ -99,7 +100,7 @@ public static class IntegrityEndpoints
                 case "appAttest":
                     return await AppAttestAsync(body, found, integrity, http.RequestServices, ct);
                 case "playIntegrity":
-                    return await PlayIntegrityAsync(body, found, integrity, http.RequestServices, ct);
+                    return await PlayIntegrityAsync(body, found, integrity, http, ct);
                 case "turnstile":
                     return await TurnstileAsync(body, found, integrity, http, ct);
                 case null or "":
@@ -136,6 +137,7 @@ public static class IntegrityEndpoints
             return Error(WincheErrorCode.InvalidArgument, "The browser check needs the token Turnstile gave (token) and the challenge.", "integrity-proof");
         if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
             return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
+        if (!LimiterOf(http).TryTakeApp(app.Id)) return TooMany(http);   // a call to Cloudflare: the app's budget
         try
         {
             await services.GetRequiredService<Turnstile.TurnstileVerifier>().VerifyAsync(body.Token, body.Challenge!, app, secret, http.Connection.RemoteIpAddress?.ToString(), ct);
@@ -150,6 +152,8 @@ public static class IntegrityEndpoints
         }
         catch (Turnstile.TurnstileException e)
         {
+            // Cloudflare's own error codes stay in the log; our own checks (site, action, challenge, age) are said.
+            if (e.Reason == "token") { Log(services, app, "The browser check", e.Message); return Error(WincheErrorCode.PermissionDenied, "The browser check refused the token (expired, used before, or not a real one).", "integrity-rejected"); }
             return Error(WincheErrorCode.PermissionDenied, $"The browser check refused it: {e.Message}", "integrity-rejected");
         }
         return Issued(integrity, integrity.Issue(app.Id, "turnstile"));
@@ -160,8 +164,9 @@ public static class IntegrityEndpoints
     /// service account) and its request, app and device verdicts are checked. The app's request hash is SHA-256 of the
     /// challenge, hex.
     /// </summary>
-    private static async Task<IResult> PlayIntegrityAsync(ExchangeRequest body, IntegrityApp app, WincheIntegrity integrity, IServiceProvider services, CancellationToken ct)
+    private static async Task<IResult> PlayIntegrityAsync(ExchangeRequest body, IntegrityApp app, WincheIntegrity integrity, HttpContext http, CancellationToken ct)
     {
+        var services = http.RequestServices;
         if (app.AndroidPackage is null)
             return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Android package: set it under Integrity to use Play Integrity.", "integrity-not-set-up");
         var secrets = services.GetService<Winche.Secrets.SecretStore>();
@@ -172,6 +177,7 @@ public static class IntegrityEndpoints
             return Error(WincheErrorCode.InvalidArgument, "Play Integrity needs the token the app got (token) and the challenge.", "integrity-proof");
         if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
             return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
+        if (!LimiterOf(http).TryTakeApp(app.Id)) return TooMany(http);   // a call to Google (a daily quota): the app's budget
         try
         {
             await services.GetRequiredService<PlayIntegrity.PlayIntegrityVerifier>().VerifyAsync(body.Token, body.Challenge!, app, account, ct);
@@ -186,6 +192,8 @@ public static class IntegrityEndpoints
         }
         catch (PlayIntegrity.PlayIntegrityException e)
         {
+            // Google's own words stay in the log; our own checks (app, request, device) are said.
+            if (e.Reason == "token") { Log(services, app, "Play Integrity", e.Message); return Error(WincheErrorCode.PermissionDenied, "Google couldn't read the Play Integrity token: ask for a new one.", "integrity-rejected"); }
             return Error(WincheErrorCode.PermissionDenied, $"Play Integrity refused it: {e.Message}", "integrity-rejected");
         }
         return Issued(integrity, integrity.Issue(app.Id, "playIntegrity"));
@@ -243,12 +251,13 @@ public static class IntegrityEndpoints
     /// other services call (identity providers' notices, HTTP functions such as webhooks), and the key set tokens are
     /// checked with.
     /// </summary>
-    public static bool IsExempt(PathString path, string? method = null)
+    public static bool IsExempt(PathString path, string method)
     {
         if (path.StartsWithSegments("/auth/v1/action") || path.StartsWithSegments("/functions/v1/http")) return true;
-        // Read-only ones (users' photos: <img> tags can't send a token; the key set): only for reading.
-        var reading = method is null || HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
-        if (reading && (path.StartsWithSegments("/auth/v1/.well-known") || path.StartsWithSegments("/auth/v1/photos"))) return true;
+        // Read-only ones, only for reading: users' photos (<img> tags can't send a token), and the key set and discovery
+        // document other services check Winche tokens with (/.well-known/jwks.json, …/openid-configuration).
+        var reading = HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
+        if (reading && (path.StartsWithSegments("/.well-known") || path.StartsWithSegments("/auth/v1/.well-known") || path.StartsWithSegments("/auth/v1/photos"))) return true;
         // /auth/v1/providers/{name}/backchannel-logout and /auth/v1/providers/{name}/changed: the provider's own server calls them.
         var parts = (path.Value ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries);
         static bool Is(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase);

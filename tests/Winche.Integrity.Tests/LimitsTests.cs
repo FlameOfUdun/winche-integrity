@@ -28,6 +28,20 @@ public class LimitsTests(PostgresFixture pg)
     }
 
     [Fact]
+    public void An_apps_budget_counts_only_paid_proofs_and_old_minutes_drop()
+    {
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.Parse("2026-11-22T10:00:00Z"));
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerApp = 2, AttemptsPerMinutePerAddress = 0 }, clock);
+        Assert.True(limiter.TryTakeAddress("1.2.3.4"));   // no address limit set
+        Assert.True(limiter.TryTakeApp("my-app"));
+        Assert.True(limiter.TryTakeApp("my-app"));
+        Assert.False(limiter.TryTakeApp("my-app"));
+        Assert.True(limiter.TryTakeApp("other-app"));   // each app its own budget
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.True(limiter.TryTakeApp("my-app"));       // a new minute
+    }
+
+    [Fact]
     public async Task A_token_says_how_long_it_lasts_so_apps_with_a_wrong_clock_refresh_in_time()
     {
         await using var app = await TestApp.StartAsync(await pg.NewDatabaseAsync());
@@ -61,6 +75,7 @@ public class LimitsTests(PostgresFixture pg)
     [InlineData("/auth/v1/action", "POST", true)]
     [InlineData("/functions/v1/http/hook", "POST", true)]
     [InlineData("/documents/v1:commit", "POST", false)]
+    [InlineData("/.well-known/openid-configuration", "GET", true)]
     public void Only_these_addresses_go_without_a_token(string path, string method, bool exempt) =>
         Assert.Equal(exempt, IntegrityEndpoints.IsExempt(new PathString(path), method));
 }

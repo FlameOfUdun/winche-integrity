@@ -34,6 +34,7 @@ public sealed class IntegrityUsage
     private readonly TimeProvider _time;
     private ConcurrentDictionary<(string App, string Product, DateOnly Day), (long Count, DateTimeOffset Last)> _pending = new();
     private bool _ready;
+    private readonly object _swap = new();
 
     public IntegrityUsage(IServiceProvider services, TimeProvider? time = null)
     {
@@ -44,7 +45,8 @@ public sealed class IntegrityUsage
     public void Count(string appId, string product)
     {
         var now = _time.GetUtcNow();
-        _pending.AddOrUpdate((appId, product, DateOnly.FromDateTime(now.UtcDateTime)), (1, now), (_, v) => (v.Count + 1, now));
+        // Under the lock the flush swaps the batch with, so a count never lands on one already written.
+        lock (_swap) _pending.AddOrUpdate((appId, product, DateOnly.FromDateTime(now.UtcDateTime)), (1, now), (_, v) => (v.Count + 1, now));
     }
 
     private async Task EnsureAsync(CancellationToken ct)
@@ -58,7 +60,8 @@ public sealed class IntegrityUsage
     public async Task FlushAsync(CancellationToken ct = default)
     {
         if (_db is null || _pending.IsEmpty) return;
-        var batch = Interlocked.Exchange(ref _pending, new());
+        ConcurrentDictionary<(string App, string Product, DateOnly Day), (long Count, DateTimeOffset Last)> batch;
+        lock (_swap) batch = Interlocked.Exchange(ref _pending, new());
         try
         {
             await EnsureAsync(ct);
@@ -67,21 +70,25 @@ public sealed class IntegrityUsage
         catch
         {
             // Not lost: back with what's been counted since, for the next flush.
-            foreach (var (key, (count, last)) in batch)
-                _pending.AddOrUpdate(key, (count, last), (_, v) => (v.Count + count, v.Last > last ? v.Last : last));
+            lock (_swap)
+                foreach (var (key, (count, last)) in batch)
+                    _pending.AddOrUpdate(key, (count, last), (_, v) => (v.Count + count, v.Last > last ? v.Last : last));
             throw;
         }
     }
 
     private async Task WriteAsync(ConcurrentDictionary<(string App, string Product, DateOnly Day), (long Count, DateTimeOffset Last)> batch, CancellationToken ct)
     {
+        // One transaction: all of the batch or none of it, so a batch put back after a failure is never counted twice.
+        await using var conn = await _db!.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
         foreach (var ((app, product, day), (count, last)) in batch)
         {
-            await using var cmd = _db!.CreateCommand($"""
+            await using var cmd = new NpgsqlCommand($"""
                 INSERT INTO {Table} (app_id, product, day, requests, last_seen) VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (app_id, product, day) DO UPDATE SET requests = {Table}.requests + EXCLUDED.requests,
                     last_seen = GREATEST({Table}.last_seen, EXCLUDED.last_seen)
-                """);
+                """, conn, tx);
             cmd.Parameters.AddWithValue(app);
             cmd.Parameters.AddWithValue(product);
             cmd.Parameters.AddWithValue(day);
@@ -89,6 +96,7 @@ public sealed class IntegrityUsage
             cmd.Parameters.AddWithValue(last);
             await cmd.ExecuteNonQueryAsync(ct);
         }
+        await tx.CommitAsync(ct);
     }
 
     public sealed record Usage(string AppId, string Product, long Today, long Last7Days, DateTimeOffset? LastSeen);

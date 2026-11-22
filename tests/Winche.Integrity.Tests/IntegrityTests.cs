@@ -228,11 +228,13 @@ public class IntegrityTests(PostgresFixture pg)
     [Fact]
     public void Links_browsers_open_and_calls_from_other_services_never_need_a_token()
     {
-        foreach (var path in new[] { "/auth/v1/action", "/auth/v1/action/apply", "/auth/v1/.well-known/jwks.json", "/functions/v1/http/stripeWebhook",
-                     "/functions/v1/http/hook/deep/path", "/auth/v1/providers/staff/backchannel-logout", "/auth/v1/providers/staff/changed", "/auth/v1/photos/abc" })
-            Assert.True(IntegrityEndpoints.IsExempt(path), path);
+        foreach (var path in new[] { "/auth/v1/action", "/auth/v1/action/apply", "/auth/v1/.well-known/jwks.json", "/functions/v1/http/paymentWebhook",
+                     "/functions/v1/http/hook/deep/path", "/auth/v1/providers/staff/backchannel-logout", "/auth/v1/providers/staff/changed", "/auth/v1/photos/abc",
+                     "/.well-known/jwks.json", "/.well-known/openid-configuration" })
+            Assert.True(IntegrityEndpoints.IsExempt(path, "GET"), path);
         foreach (var path in new[] { "/auth/v1/signIn", "/auth/v1/providers", "/functions/v1/call/send", "/documents/v1/documents/x", "/auth/v1/actions" })
-            Assert.False(IntegrityEndpoints.IsExempt(path), path);
+            Assert.False(IntegrityEndpoints.IsExempt(path, "GET"), path);
+        Assert.False(IntegrityEndpoints.IsExempt("/.well-known/jwks.json", "POST"));
     }
 
     [Fact]

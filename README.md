@@ -71,11 +71,13 @@ POST /integrity/v1/exchange
 `expiresIn` is the token's lifetime in seconds: an app should count from when it got the token rather than compare
 `expiresAt` with its own clock, which may be wrong.
 
-Asking for challenges and trading proofs is limited (each try can cost a call to Google or Cloudflare, and Play Integrity
-has a daily quota): 30 a minute from one address and 600 a minute for one app, from everywhere together
-(`AttemptsPerMinutePerAddress`, `AttemptsPerMinutePerApp`; 0: no limit). Past that: `resource-exhausted`, reason
-`integrity-rate-limited`, with `Retry-After`. Behind a proxy, have the host take the caller's address from it
-(forwarded headers), or everyone shares one address.
+Asking for challenges and trading proofs is limited: 30 a minute from one address (`AttemptsPerMinutePerAddress`), and
+proofs that cost a call to Google or Cloudflare (Play Integrity, which has a daily quota, and Turnstile) 600 a minute per
+app from everywhere together, counted only once a challenge was used (`AttemptsPerMinutePerApp`); 0 turns either off.
+App Attest and debug tokens are checked on the server, so only the address limit applies to them, and nobody can use up
+an app's budget with challenges alone. Past a limit: `resource-exhausted`, reason `integrity-rate-limited`, with
+`Retry-After`. Behind a proxy, have the host take the caller's address from it (forwarded headers), trusting only that
+proxy: a host that believes any `X-Forwarded-For` lets one caller pose as many addresses.
 
 With App Attest, the app first asks for a challenge (`POST /integrity/v1/challenge { "app" }` → `{ challenge,
 expiresAt }`: one use, 5 minutes), then sends `{ app, provider: "appAttest", keyId, challenge, attestation }` the
@@ -113,7 +115,7 @@ with the same master key, for that project. After a master key change, tokens si
 ### What's never checked
 
 Addresses browsers open from a link or an image, or other services call: email action links (`/auth/v1/action`), users'
-photos (`/auth/v1/photos`), the key set
+photos (`/auth/v1/photos`, for reading), the key set and discovery document (`/.well-known/…`, for reading)
 (`/auth/v1/.well-known`), identity providers' notices (`/auth/v1/providers/{name}/backchannel-logout`, `…/changed`),
 HTTP functions (`/functions/v1/http/…`, such as webhooks), and CORS preflights. Signed file links are the host's to leave
 out.
