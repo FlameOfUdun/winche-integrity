@@ -10,8 +10,8 @@ How an app proves itself:
 | Platform | Proof | |
 | --- | --- | --- |
 | Simulators, emulators, desktop builds, CI | a **debug token** made in the console | now |
-| iOS 14+, macOS 11+ | Apple App Attest (`winche_app_attest` for Flutter) | now |
-| Android 6+ (with Google Play) | Google Play Integrity, standard API (`winche_integrity` for Flutter) | now |
+| iOS 14+, macOS 12+ | Apple App Attest (`winche_integrity` for Flutter) | now |
+| Android 7+ (with Google Play) | Google Play Integrity, standard API (`winche_integrity` for Flutter) | now |
 | Web | a browser check: Cloudflare Turnstile (`winche_integrity` for Flutter web) | now |
 
 Windows and Linux have no proof an app can give of itself: they use debug tokens.
@@ -42,13 +42,15 @@ Winche Server does this for every project; its console's **Integrity** page chan
 
 ### Settings (area `integrity`)
 
-- **Apps**: each with an id (it goes in the app's `winche_options.dart`), a name, and what identifies it on each platform (whatever it's built with):
+- **Apps**: each with an id (the app is built with it), a name, and what identifies it on each platform (whatever it's built with):
   Android package, Apple bundle id and team id (App Attest needs both), and whether App Attest keys from development
-  builds (run from Xcode) are accepted besides TestFlight and App Store ones (`appleDevelopment`, off by default).
+  builds (run from Xcode) are accepted besides TestFlight and App Store ones (`appleDevelopment`, off by default; turned
+  off again, the keys development builds made stop working too).
   Android: the Google Cloud project number Play Integrity runs under, whether builds Google Play doesn't know are
-  accepted (`androidSideloaded`, off), how good the device must be (`androidDeviceIntegrity`: `basic`, `device` (the
+  accepted (`androidSideloaded`, off; it needs the app's signing certificate, below, or a changed copy signed by anyone
+  would pass), how good the device must be (`androidDeviceIntegrity`: `basic`, `device` (the
   default) or `strong`), and optionally the signing certificates (SHA-256, base64url, as Play Console shows them).
-  Web: the Turnstile widget's site key and the sites the app runs on (hostnames; empty: any); its secret key is a
+  Web: the Turnstile widget's site key and the sites the app runs on (hostnames; empty: any site, so set them); Cloudflare's test keys are refused; its secret key is a
   project secret, `integrity.apps.<app id>.turnstileSecret`.
 - **Enforcement**, per product: `off` (not checked), `monitor` (the default: checked and counted, never refused) or
   `enforce` (refused without a valid token: `permission-denied`, reason `integrity-required`). Watch the counts in
@@ -63,8 +65,17 @@ Winche Server does this for every project; its console's **Integrity** page chan
 POST /integrity/v1/exchange
 { "app": "clinic-app", "provider": "debug", "debugToken": "wdt_…" }
 
-200 { "token": "wit1.…", "expiresAt": "2026-11-21T15:00:00Z" }
+200 { "token": "wit1.…", "expiresAt": "2026-11-21T15:00:00Z", "expiresIn": 3600 }
 ```
+
+`expiresIn` is the token's lifetime in seconds: an app should count from when it got the token rather than compare
+`expiresAt` with its own clock, which may be wrong.
+
+Asking for challenges and trading proofs is limited (each try can cost a call to Google or Cloudflare, and Play Integrity
+has a daily quota): 30 a minute from one address and 600 a minute for one app, from everywhere together
+(`AttemptsPerMinutePerAddress`, `AttemptsPerMinutePerApp`; 0: no limit). Past that: `resource-exhausted`, reason
+`integrity-rate-limited`, with `Retry-After`. Behind a proxy, have the host take the caller's address from it
+(forwarded headers), or everyone shares one address.
 
 With App Attest, the app first asks for a challenge (`POST /integrity/v1/challenge { "app" }` → `{ challenge,
 expiresAt }`: one use, 5 minutes), then sends `{ app, provider: "appAttest", keyId, challenge, attestation }` the
@@ -82,7 +93,8 @@ with `requestHash` = SHA-256 of the challenge's UTF-8, lower-case hex. The serve
 `integrity.playIntegrity.serviceAccount`, with the Play Integrity API on and its Cloud project linked to the app in Play
 Console), then checks the request (package, request hash, made within 7 minutes), the app (`PLAY_RECOGNIZED`, or with
 `androidSideloaded` anything but `UNEVALUATED`; the certificate when set) and the device (the app's level). Google being
-down is `integrity-unavailable`; a service account it refuses is `integrity-not-set-up`.
+down or its quota used up is `integrity-unavailable`; a service account it refuses is `integrity-not-set-up`. Why is
+written to the server's log (the service account, Google's own words), never told to the caller.
 
 On the web, the challenge's answer carries the app's `webSiteKey`; the browser runs an invisible Turnstile widget
 (explicit render, action `winche-integrity`, cData = the challenge) and sends `{ app, provider: "turnstile",

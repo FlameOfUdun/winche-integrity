@@ -196,6 +196,12 @@ public class AppAttestExchangeTests(PostgresFixture pg)
         await app.SaveAsync(s => s with { Apps = [s.Apps[0] with { AppleDevelopment = true }] });
         await TokenOf(await AttestDevelopment());
         Assert.True((await app.Services.GetRequiredService<IntegrityStore>().FindKeyAsync(device.KeyId))!.Development);
+        await TokenOf(await AssertAsync(app, device, await ChallengeAsync(app), 1));
+        // Turned off again: the development build's key stops working too.
+        await app.SaveAsync(s => s with { Apps = [s.Apps[0] with { AppleDevelopment = false }] });
+        var stopped = await AssertAsync(app, device, await ChallengeAsync(app), 2);
+        Assert.Equal("integrity-rejected", await TestApp.ReasonOf(stopped));
+        Assert.Contains("development build", await stopped.Content.ReadAsStringAsync());
 
         await app.SaveAsync(s => s with { Apps = [s.Apps[0] with { AppleTeamId = null }] });
         Assert.Equal("integrity-not-set-up", await TestApp.ReasonOf(await AssertAsync(app, device, await ChallengeAsync(app), 1)));

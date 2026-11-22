@@ -97,7 +97,7 @@ public class TurnstileTests(PostgresFixture pg)
         // Cloudflare's always-passing test keys: never good enough.
         var testing = await Refused(c => new JsonObject { ["success"] = true, ["hostname"] = "example.com", ["metadata"] = new JsonObject { ["result_with_testing_key"] = true } });
         Assert.Equal("integrity-not-set-up", testing.Reason);
-        Assert.Contains("test keys", testing.Body);
+        Assert.DoesNotContain("test keys", testing.Body);   // why is in the server's log
 
         // No hostnames set: any site.
         await app.SaveAsync(s => s with { Apps = [s.Apps[0] with { WebHostnames = [] }] });
@@ -113,7 +113,12 @@ public class TurnstileTests(PostgresFixture pg)
         await app.Services.GetRequiredService<SecretStore>().SetAsync(WincheIntegrity.TurnstileSecret("clinic-app"), "0x4AAAAAAAwrong", null);
         var wrong = await ProveAsync(app, cloudflare);
         Assert.Equal("integrity-not-set-up", await TestApp.ReasonOf(wrong));
-        Assert.Contains("doesn't know the app's secret key", await wrong.Content.ReadAsStringAsync());
+        Assert.DoesNotContain("secret key", await wrong.Content.ReadAsStringAsync());   // why is in the server's log
+        // Cloudflare's test secret keys pass anything: refused before Cloudflare is asked.
+        await app.Services.GetRequiredService<SecretStore>().SetAsync(WincheIntegrity.TurnstileSecret("clinic-app"), "1x0000000000000000000000000000000AA", null);
+        var calls = cloudflare.Calls.Count;
+        Assert.Equal("integrity-not-set-up", await TestApp.ReasonOf(await ProveAsync(app, cloudflare)));
+        Assert.Equal(calls, cloudflare.Calls.Count);
         await app.Services.GetRequiredService<SecretStore>().SetAsync(WincheIntegrity.TurnstileSecret("clinic-app"), FakeCloudflare.Secret, null);
         cloudflare.Status = HttpStatusCode.BadGateway;
         Assert.Equal("integrity-unavailable", await TestApp.ReasonOf(await ProveAsync(app, cloudflare)));

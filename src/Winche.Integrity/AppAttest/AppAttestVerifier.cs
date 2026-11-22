@@ -14,6 +14,7 @@ public sealed class AppAttestException(string reason, string message) : Exceptio
 }
 
 /// <summary>A key App Attest vouched for: its public key (an uncompressed P-256 point) and the environment.</summary>
+/// <param name="PublicKey">The key, an uncompressed P-256 point.</param>
 /// <param name="Development">Made by a development build (<c>appattestdevelop</c>), not one from TestFlight or the App Store.</param>
 /// <param name="Receipt">Apple's receipt, kept for fraud checks later.</param>
 public sealed record AttestedKey(byte[] PublicKey, bool Development, byte[] Receipt);

@@ -98,8 +98,10 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
                 _access.TryRemove(account.ClientEmail, out _);
                 throw new PlayIntegrityException("google", $"Google refused the service account {account.ClientEmail} ({(int)response.StatusCode}): {GoogleMessage(text)} Link its Google Cloud project to the app in Play Console and give it the Play Integrity API.");
             }
-            if (!response.IsSuccessStatusCode) throw new PlayIntegrityException("google", $"Google answered {(int)response.StatusCode}: {GoogleMessage(text)}", retryable: (int)response.StatusCode >= 500);
-            payload = JsonNode.Parse(text)?["tokenPayloadExternal"]?.AsObject() ?? throw new PlayIntegrityException("token", "Google's answer has no verdict.");
+            if (!response.IsSuccessStatusCode)
+                throw new PlayIntegrityException("google", $"Google answered {(int)response.StatusCode}: {GoogleMessage(text)}",
+                    retryable: (int)response.StatusCode >= 500 || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests);   // 429: the quota, for now
+            payload = (JsonNode.Parse(text)?["tokenPayloadExternal"] as JsonObject) ?? throw new PlayIntegrityException("token", "Google's answer has no verdict.");
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
@@ -107,42 +109,50 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
         }
         catch (JsonException) { throw new PlayIntegrityException("google", "Google's answer can't be read."); }
 
-        // The request first: this app, this challenge, just now.
-        var details = payload["requestDetails"];
-        if (details?["requestPackageName"]?.GetValue<string>() != package)
-            throw new PlayIntegrityException("request", $"The token was asked for by another app than {package}.");
-        if (details?["requestHash"]?.GetValue<string>() != RequestHash(challenge))
-            throw new PlayIntegrityException("request", "The token wasn't made for this challenge.");
-        var millis = details?["timestampMillis"] switch
+        try
         {
-            JsonValue v when v.TryGetValue<long>(out var n) => n,
-            JsonValue v when v.TryGetValue<string>(out var s) && long.TryParse(s, out var n) => n,
-            _ => throw new PlayIntegrityException("request", "The token has no time."),
-        };
-        var age = _time.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(millis);
-        if (age > MaxAge || age < TimeSpan.FromMinutes(-2)) throw new PlayIntegrityException("request", "The token is too old (or from the future).");
+            // The request first: this app, this challenge, just now.
+            var details = payload["requestDetails"];
+            if (details?["requestPackageName"]?.GetValue<string>() != package)
+                throw new PlayIntegrityException("request", $"The token was asked for by another app than {package}.");
+            if (details?["requestHash"]?.GetValue<string>() != RequestHash(challenge))
+                throw new PlayIntegrityException("request", "The token wasn't made for this challenge.");
+            var millis = details?["timestampMillis"] switch
+            {
+                JsonValue v when v.TryGetValue<long>(out var n) => n,
+                JsonValue v when v.TryGetValue<string>(out var s) && long.TryParse(s, out var n) => n,
+                _ => throw new PlayIntegrityException("request", "The token has no time."),
+            };
+            var age = _time.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(millis);
+            if (age > MaxAge || age < TimeSpan.FromMinutes(-2)) throw new PlayIntegrityException("request", "The token is too old (or from the future).");
 
-        // The app: a build Google Play knows (or, where the app accepts others, at least its own signing certificate).
-        var appIntegrity = payload["appIntegrity"];
-        var recognition = appIntegrity?["appRecognitionVerdict"]?.GetValue<string>() ?? "UNEVALUATED";
-        if (recognition == "UNEVALUATED") throw new PlayIntegrityException("app", "Google couldn't tell which app made the token (the device may be compromised).");
-        if (recognition != "PLAY_RECOGNIZED" && !app.AndroidSideloaded)
-            throw new PlayIntegrityException("app", "The app isn't a build Google Play knows (installed some other way, or changed). Accept builds from elsewhere for the app to allow it.");
-        if (app.AndroidCertificates.Count > 0)
-        {
-            var digests = appIntegrity?["certificateSha256Digest"]?.AsArray().Select(d => d?.GetValue<string>()).ToList() ?? [];
-            if (!digests.Any(d => d is not null && app.AndroidCertificates.Contains(d.TrimEnd('='))))
-                throw new PlayIntegrityException("app", "The app isn't signed with one of its certificates.");
+            // The app: a build Google Play knows (or, where the app accepts others, at least its own signing certificate).
+            var appIntegrity = payload["appIntegrity"];
+            var recognition = appIntegrity?["appRecognitionVerdict"]?.GetValue<string>() ?? "UNEVALUATED";
+            if (recognition == "UNEVALUATED") throw new PlayIntegrityException("app", "Google couldn't tell which app made the token (the device may be compromised).");
+            if (recognition != "PLAY_RECOGNIZED" && !app.AndroidSideloaded)
+                throw new PlayIntegrityException("app", "The app isn't a build Google Play knows (installed some other way, or changed). Accept builds from elsewhere for the app to allow it.");
+            if (app.AndroidCertificates.Count > 0)
+            {
+                var digests = appIntegrity?["certificateSha256Digest"]?.AsArray().Select(d => d?.GetValue<string>()).ToList() ?? [];
+                if (!digests.Any(d => d is not null && app.AndroidCertificates.Contains(d.TrimEnd('='))))
+                    throw new PlayIntegrityException("app", "The app isn't signed with one of its certificates.");
+            }
+
+            // The device: at least the app's level.
+            var device = payload["deviceIntegrity"]?["deviceRecognitionVerdict"]?.AsArray().Select(d => d!.GetValue<string>()).ToList() ?? [];
+            if (!device.Any(Levels[app.AndroidDeviceIntegrity].Contains))
+                throw new PlayIntegrityException("device", device.Count == 0
+                    ? "The device doesn't pass Google's integrity checks (rooted, an emulator, or a token decoded before)."
+                    : $"The device is only {string.Join(", ", device)}: the app needs {app.AndroidDeviceIntegrity} integrity.");
+            return new PlayVerdict(recognition, device, payload["accountDetails"]?["appLicensingVerdict"]?.GetValue<string>(),
+                appIntegrity?["versionCode"]?.ToString());
         }
-
-        // The device: at least the app's level.
-        var device = payload["deviceIntegrity"]?["deviceRecognitionVerdict"]?.AsArray().Select(d => d!.GetValue<string>()).ToList() ?? [];
-        if (!device.Any(Levels[app.AndroidDeviceIntegrity].Contains))
-            throw new PlayIntegrityException("device", device.Count == 0
-                ? "The device doesn't pass Google's integrity checks (rooted, an emulator, or a token decoded before)."
-                : $"The device is only {string.Join(", ", device)}: the app needs {app.AndroidDeviceIntegrity} integrity.");
-        return new PlayVerdict(recognition, device, payload["accountDetails"]?["appLicensingVerdict"]?.GetValue<string>(),
-            appIntegrity?["versionCode"]?.ToString());
+        catch (InvalidOperationException)
+        {
+            // A verdict field of another type than Google documents: never a pass.
+            throw new PlayIntegrityException("google", "Google's verdict can't be read.", retryable: true);
+        }
     }
 
     /// <summary>An access token for the Play Integrity API: a signed assertion traded at Google's token endpoint, kept until near expiry.</summary>
@@ -173,7 +183,8 @@ public sealed class PlayIntegrityVerifier(HttpClient? http = null, TimeProvider?
             }), ct);
             var text = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                throw new PlayIntegrityException("google", $"Google didn't sign the service account {account.ClientEmail} in ({(int)response.StatusCode}): {GoogleMessage(text)}", retryable: (int)response.StatusCode >= 500);
+                throw new PlayIntegrityException("google", $"Google didn't sign the service account {account.ClientEmail} in ({(int)response.StatusCode}): {GoogleMessage(text)}",
+                    retryable: (int)response.StatusCode >= 500 || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests);
             var body = JsonNode.Parse(text);
             var token = body?["access_token"]?.GetValue<string>() ?? throw new PlayIntegrityException("google", "Google's sign-in answer has no access token.");
             var seconds = body?["expires_in"]?.GetValue<int>() ?? 3600;

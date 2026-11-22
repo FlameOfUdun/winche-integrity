@@ -27,6 +27,15 @@ public sealed class WincheIntegrityOptions
     /// <summary>The root App Attest attestations must chain to: Apple's (tests make their own).</summary>
     internal System.Security.Cryptography.X509Certificates.X509Certificate2? AppAttestRoot { get; set; }
 
+    /// <summary>
+    /// Challenges and proofs each address may ask for a minute (each can cost a call to Google or Cloudflare); 0: no
+    /// limit. Default 30.
+    /// </summary>
+    public int AttemptsPerMinutePerAddress { get; set; } = 30;
+
+    /// <summary>Challenges and proofs per app a minute, from every address together (0: no limit). Default 600.</summary>
+    public int AttemptsPerMinutePerApp { get; set; } = 600;
+
     /// <summary>How Google is called (tests answer for it).</summary>
     internal HttpClient? PlayIntegrityHttp { get; set; }
 
@@ -35,8 +44,8 @@ public sealed class WincheIntegrityOptions
 }
 
 /// <summary>
-/// Winche Integrity: apps prove they're the project's own (a debug token for now; App Attest, Play Integrity and a
-/// browser check to come), get a short-lived token for it, and send it with every request. Each product checks it,
+/// Winche Integrity: apps prove they're the project's own (App Attest on Apple devices, Play Integrity on Android, a
+/// browser check on the web, or a debug token), get a short-lived token for it, and send it with every request. Each product checks it,
 /// counts it, and refuses requests without one where it's enforced (Winche.Integrity.AspNetCore).
 /// <para>Tokens are signed with a key derived from the master key (<see cref="WincheKeys"/>); without one, none are made.</para>
 /// </summary>

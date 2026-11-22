@@ -59,10 +59,25 @@ public sealed class IntegrityUsage
     {
         if (_db is null || _pending.IsEmpty) return;
         var batch = Interlocked.Exchange(ref _pending, new());
-        await EnsureAsync(ct);
+        try
+        {
+            await EnsureAsync(ct);
+            await WriteAsync(batch, ct);
+        }
+        catch
+        {
+            // Not lost: back with what's been counted since, for the next flush.
+            foreach (var (key, (count, last)) in batch)
+                _pending.AddOrUpdate(key, (count, last), (_, v) => (v.Count + count, v.Last > last ? v.Last : last));
+            throw;
+        }
+    }
+
+    private async Task WriteAsync(ConcurrentDictionary<(string App, string Product, DateOnly Day), (long Count, DateTimeOffset Last)> batch, CancellationToken ct)
+    {
         foreach (var ((app, product, day), (count, last)) in batch)
         {
-            await using var cmd = _db.CreateCommand($"""
+            await using var cmd = _db!.CreateCommand($"""
                 INSERT INTO {Table} (app_id, product, day, requests, last_seen) VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (app_id, product, day) DO UPDATE SET requests = {Table}.requests + EXCLUDED.requests,
                     last_seen = GREATEST({Table}.last_seen, EXCLUDED.last_seen)

@@ -20,7 +20,7 @@ public sealed class FakeGoogle : HttpMessageHandler
     public RSA Key { get; } = RSA.Create(2048);
     public string ServiceAccountJson => new JsonObject
     {
-        ["type"] = "service_account", ["client_email"] = "integrity@clinic.iam.gserviceaccount.com",
+        ["type"] = "service_account", ["client_email"] = "integrity@my-app.iam.gserviceaccount.com",
         ["private_key"] = Key.ExportPkcs8PrivateKeyPem(), ["token_uri"] = $"{Host}/token",
     }.ToJsonString();
 
@@ -199,7 +199,12 @@ public class PlayIntegrityTests(PostgresFixture pg)
         google.DecodeStatus = HttpStatusCode.Forbidden;   // the service account's project isn't linked in Play Console
         var unlinked = await ProveAsync(app, google);
         Assert.Equal("integrity-not-set-up", await TestApp.ReasonOf(unlinked));
-        Assert.Contains("Link its Google Cloud project", await unlinked.Content.ReadAsStringAsync());
+        // Why is for the server's log: the caller never learns the service account or Google's words.
+        var said = await unlinked.Content.ReadAsStringAsync();
+        Assert.Contains("server's log", said);
+        Assert.DoesNotContain("iam.gserviceaccount.com", said);
+        google.DecodeStatus = HttpStatusCode.TooManyRequests;   // the quota used up: for now, not a set-up problem
+        Assert.Equal("integrity-unavailable", await TestApp.ReasonOf(await ProveAsync(app, google)));
         google.DecodeStatus = HttpStatusCode.ServiceUnavailable;
         Assert.Equal("integrity-unavailable", await TestApp.ReasonOf(await ProveAsync(app, google)));
         google.DecodeStatus = null;

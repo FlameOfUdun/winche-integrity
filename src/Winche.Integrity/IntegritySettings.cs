@@ -103,6 +103,7 @@ public sealed partial record IntegritySettings
 
     public static IEnumerable<string> ProblemsOf(IntegrityApp a)
     {
+        if (!WincheIntegrity.IsValidId(a.Id)) yield return $"'{a.Id}' isn't an app id: 3 to 40 lower-case letters, digits and dashes, starting with a letter.";
         if (string.IsNullOrWhiteSpace(a.Name)) yield return "Name every app.";
         else if (a.Name.Length > 80) yield return $"'{a.Name[..20]}…' is too long a name (80 at most).";
         if (a.AndroidPackage is { } pkg && !AndroidPackageRx().IsMatch(pkg)) yield return $"'{pkg}' isn't an Android package name (like com.example.app).";
@@ -111,6 +112,10 @@ public sealed partial record IntegritySettings
         if (a.AndroidCloudProjectNumber is <= 0) yield return "A Google Cloud project number is a positive number (Google Cloud console → the project's dashboard).";
         if (a.AndroidDeviceIntegrity is not ("basic" or "device" or "strong")) yield return $"'{a.AndroidDeviceIntegrity}' isn't a device integrity level: basic, device or strong.";
         if (a.WebSiteKey is { } siteKey && !SiteKeyRx().IsMatch(siteKey)) yield return $"'{siteKey}' isn't a Turnstile site key (like 0x4AAAAAAA…).";
+        else if (a.WebSiteKey is { } testKey && TestSiteKeyRx().IsMatch(testKey))
+            yield return $"'{testKey}' is one of Cloudflare's test site keys, which anyone can pass: make the app a widget of its own.";
+        if (a.AndroidSideloaded && a.AndroidCertificates.Count == 0)
+            yield return $"{a.Name}: to accept builds from outside Google Play, add the app's signing certificate (otherwise a changed copy, signed by anyone, would pass).";
         foreach (var h in a.WebHostnames)
             if (!HostnameRx().IsMatch(h)) yield return $"'{h}' isn't a site's hostname (like app.example.com: no https:// or path).";
         foreach (var c in a.AndroidCertificates)
@@ -131,6 +136,14 @@ public sealed partial record IntegritySettings
 
     [GeneratedRegex(@"^[0-9]x[A-Za-z0-9_-]{10,100}$")]
     private static partial Regex SiteKeyRx();
+
+    /// <summary>Cloudflare's test site keys (always pass, always fail, …): 1x, 2x or 3x, zeros, two letters.</summary>
+    [GeneratedRegex(@"^[123]x0{20}[A-F]{2}$")]
+    private static partial Regex TestSiteKeyRx();
+
+    /// <summary>Cloudflare's test secret keys, which pass any token.</summary>
+    [GeneratedRegex(@"^[123]x0{30,}[A-F]{2}$")]
+    internal static partial Regex TestSecretRx();
 
     [GeneratedRegex(@"^(localhost|([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})$")]
     private static partial Regex HostnameRx();

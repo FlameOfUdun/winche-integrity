@@ -2,7 +2,7 @@
   <PropertyGroup>
     <PackageId>Winche.Integrity</PackageId>
     <RootNamespace>Winche.Integrity</RootNamespace>
-    <PackageDescription>Winche Integrity: a project's apps prove they're its own (debug tokens; App Attest, Play Integrity and a browser check to come) and get short-lived tokens; each product checks them, counts them, and can refuse requests without one.</PackageDescription>
+    <PackageDescription>Winche Integrity: a project's apps prove they're its own (App Attest, Play Integrity, a browser check with Cloudflare Turnstile, or debug tokens) and get short-lived tokens; each product checks them, counts them, and can refuse requests without one.</PackageDescription>
     <PackageTags>attestation;app-integrity;security</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

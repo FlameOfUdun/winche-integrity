@@ -62,27 +62,35 @@ public sealed class TurnstileVerifier(HttpClient? http = null, TimeProvider? tim
         }
         catch (JsonException) { throw new TurnstileException("cloudflare", "Cloudflare's answer can't be read.", retryable: true); }
 
-        // Cloudflare's always-passing test keys would let anyone in: never accepted.
-        if (r?["metadata"]?["result_with_testing_key"]?.GetValue<bool>() == true)
-            throw new TurnstileException("testing", "The token was checked with one of Cloudflare's test keys: give the app its own widget's keys.");
-        if (r?["success"]?.GetValue<bool>() != true)
+        try
         {
-            var codes = r?["error-codes"]?.AsArray().Select(c => c?.GetValue<string>()).ToList() ?? [];
-            if (codes.Contains("invalid-input-secret") || codes.Contains("missing-input-secret"))
-                throw new TurnstileException("secret", "Cloudflare doesn't know the app's secret key: set it again (the widget's secret key, Cloudflare dashboard → Turnstile).");
-            if (codes.Contains("internal-error")) throw new TurnstileException("cloudflare", "Cloudflare had an internal error.", retryable: true);
-            throw new TurnstileException("token", codes.Contains("timeout-or-duplicate")
-                ? "The browser check expired or was used before."
-                : $"Cloudflare refused the browser check ({string.Join(", ", codes)}).");
-        }
+            // Cloudflare's always-passing test keys would let anyone in: never accepted.
+            if (r?["metadata"]?["result_with_testing_key"]?.GetValue<bool>() == true)
+                throw new TurnstileException("testing", "The token was checked with one of Cloudflare's test keys: give the app its own widget's keys.");
+            if (r?["success"]?.GetValue<bool>() != true)
+            {
+                var codes = r?["error-codes"]?.AsArray().Select(c => c?.GetValue<string>()).ToList() ?? [];
+                if (codes.Contains("invalid-input-secret") || codes.Contains("missing-input-secret"))
+                    throw new TurnstileException("secret", "Cloudflare doesn't know the app's secret key: set it again (the widget's secret key, Cloudflare dashboard → Turnstile).");
+                if (codes.Contains("internal-error")) throw new TurnstileException("cloudflare", "Cloudflare had an internal error.", retryable: true);
+                throw new TurnstileException("token", codes.Contains("timeout-or-duplicate")
+                    ? "The browser check expired or was used before."
+                    : $"Cloudflare refused the browser check ({string.Join(", ", codes)}).");
+            }
 
-        // This app's site, this action, this challenge, just now.
-        var hostname = r["hostname"]?.GetValue<string>();
-        if (app.WebHostnames.Count > 0 && (hostname is null || !app.WebHostnames.Contains(hostname.ToLowerInvariant())))
-            throw new TurnstileException("request", $"The browser check was made on {hostname ?? "an unknown site"}, not one of {app.Name}'s.");
-        if (r["action"]?.GetValue<string>() != Action) throw new TurnstileException("request", "The browser check was made for something else (another action).");
-        if (r["cdata"]?.GetValue<string>() != challenge) throw new TurnstileException("request", "The browser check wasn't made for this challenge.");
-        if (r["challenge_ts"]?.GetValue<string>() is not { } at || !DateTimeOffset.TryParse(at, out var solved) || _time.GetUtcNow() - solved > MaxAge)
-            throw new TurnstileException("request", "The browser check is too old.");
+            // This app's site, this action, this challenge, just now.
+            var hostname = r["hostname"]?.GetValue<string>();
+            if (app.WebHostnames.Count > 0 && (hostname is null || !app.WebHostnames.Contains(hostname.ToLowerInvariant())))
+                throw new TurnstileException("request", $"The browser check was made on {hostname ?? "an unknown site"}, not one of {app.Name}'s.");
+            if (r["action"]?.GetValue<string>() != Action) throw new TurnstileException("request", "The browser check was made for something else (another action).");
+            if (r["cdata"]?.GetValue<string>() != challenge) throw new TurnstileException("request", "The browser check wasn't made for this challenge.");
+            if (r["challenge_ts"]?.GetValue<string>() is not { } at || !DateTimeOffset.TryParse(at, out var solved) || _time.GetUtcNow() - solved > MaxAge)
+                throw new TurnstileException("request", "The browser check is too old.");
+        }
+        catch (InvalidOperationException)
+        {
+            // A field of another type than Cloudflare documents: not the browser's fault, and never a pass.
+            throw new TurnstileException("cloudflare", "Cloudflare's answer can't be read.", retryable: true);
+        }
     }
 }
