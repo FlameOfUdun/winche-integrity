@@ -22,6 +22,10 @@ public sealed record IntegrityApp
     public string AndroidDeviceIntegrity { get; init; } = "device";
     /// <summary>Android: when set, the app must be signed with one of these certificates (SHA-256, base64url, as Play Console shows).</summary>
     public IReadOnlyList<string> AndroidCertificates { get; init; } = [];
+    /// <summary>Web: the Cloudflare Turnstile widget's site key (public; the browser gets it with each challenge).</summary>
+    public string? WebSiteKey { get; init; }
+    /// <summary>Web: the sites the app runs on (app.example.com); a browser check made elsewhere is refused. Empty: any.</summary>
+    public IReadOnlyList<string> WebHostnames { get; init; } = [];
     /// <summary>Apple (iOS, macOS): the bundle id (com.example.app), for App Attest.</summary>
     public string? AppleBundleId { get; init; }
     /// <summary>Apple: the developer team id (10 letters and digits), for App Attest.</summary>
@@ -109,6 +113,9 @@ public sealed partial record IntegritySettings
         if (a.AppleTeamId is { } team && !TeamRx().IsMatch(team)) yield return $"'{team}' isn't an Apple team id (10 capital letters and digits, like ABCDE12345).";
         if (a.AndroidCloudProjectNumber is <= 0) yield return "A Google Cloud project number is a positive number (Google Cloud console → the project's dashboard).";
         if (a.AndroidDeviceIntegrity is not ("basic" or "device" or "strong")) yield return $"'{a.AndroidDeviceIntegrity}' isn't a device integrity level: basic, device or strong.";
+        if (a.WebSiteKey is { } siteKey && !SiteKeyRx().IsMatch(siteKey)) yield return $"'{siteKey}' isn't a Turnstile site key (like 0x4AAAAAAA…).";
+        foreach (var h in a.WebHostnames)
+            if (!HostnameRx().IsMatch(h)) yield return $"'{h}' isn't a site's hostname (like app.example.com: no https:// or path).";
         foreach (var c in a.AndroidCertificates)
             if (!CertificateRx().IsMatch(c)) yield return $"'{c}' isn't a certificate's SHA-256 (43 base64url characters, as Play Console shows it).";
     }
@@ -124,4 +131,10 @@ public sealed partial record IntegritySettings
 
     [GeneratedRegex(@"^[A-Za-z0-9_-]{43}$")]
     private static partial Regex CertificateRx();
+
+    [GeneratedRegex(@"^[0-9]x[A-Za-z0-9_-]{10,100}$")]
+    private static partial Regex SiteKeyRx();
+
+    [GeneratedRegex(@"^(localhost|([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})$")]
+    private static partial Regex HostnameRx();
 }

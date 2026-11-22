@@ -23,7 +23,7 @@ public static class IntegrityEndpoints
 
     public sealed record ChallengeRequest(string? App);
 
-    private const string Providers = "debug, appAttest or playIntegrity";
+    private const string Providers = "debug, appAttest, playIntegrity or turnstile";
 
     private static IResult Error(WincheErrorCode code, string message, string reason) => new WincheError(code, message, reason).ToResult();
 
@@ -45,8 +45,8 @@ public static class IntegrityEndpoints
             if (integrity.Find(body.App?.Trim()) is not { } found)
                 return Error(WincheErrorCode.NotFound, $"There's no app '{body.App}' in this project: add it under Integrity in the console.", "integrity-unknown-app");
             var (challenge, expires) = await http.RequestServices.GetRequiredService<IntegrityStore>().NewChallengeAsync(found.Id, ct);
-            // Play Integrity asks the app for its Google Cloud project number: it comes from here, not the app's options.
-            return Results.Json(new { challenge, expiresAt = expires, androidCloudProjectNumber = found.AndroidCloudProjectNumber });
+            // Play Integrity asks the app for its Google Cloud project number, Turnstile for its site key: they come from here, not the app's options.
+            return Results.Json(new { challenge, expiresAt = expires, androidCloudProjectNumber = found.AndroidCloudProjectNumber, webSiteKey = found.WebSiteKey });
         });
 
         group.MapPost("/exchange", async (ExchangeRequest body, HttpContext http, CancellationToken ct) =>
@@ -66,6 +66,8 @@ public static class IntegrityEndpoints
                     return await AppAttestAsync(body, found, integrity, http.RequestServices, ct);
                 case "playIntegrity":
                     return await PlayIntegrityAsync(body, found, integrity, http.RequestServices, ct);
+                case "turnstile":
+                    return await TurnstileAsync(body, found, integrity, http, ct);
                 case null or "":
                     return Error(WincheErrorCode.InvalidArgument, $"Say how the app proves itself (provider): {Providers}.", "integrity-provider");
                 default:
@@ -80,6 +82,43 @@ public static class IntegrityEndpoints
         http.RequestServices.GetService<WincheIntegrity>() is { Available: true, CanSign: true } && http.RequestServices.GetService<IntegrityStore>() is { Available: true }
             ? null
             : Error(WincheErrorCode.FailedPrecondition, "Integrity isn't set up on this server: it needs its settings, a master key and the config database.", "integrity-unavailable");
+
+    /// <summary>
+    /// The browser check (Cloudflare Turnstile): the challenge is used up, then Cloudflare checks the token with the
+    /// app's secret key, and the site, action and challenge (the widget's cData) are checked.
+    /// </summary>
+    private static async Task<IResult> TurnstileAsync(ExchangeRequest body, IntegrityApp app, WincheIntegrity integrity, HttpContext http, CancellationToken ct)
+    {
+        var services = http.RequestServices;
+        if (app.WebSiteKey is null)
+            return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Turnstile site key: set it under Integrity to use the browser check.", "integrity-not-set-up");
+        var secrets = services.GetService<Winche.Secrets.SecretStore>();
+        var secret = secrets is { Available: true } ? await secrets.GetAsync(WincheIntegrity.TurnstileSecret(app.Id), ct) : null;
+        if (string.IsNullOrEmpty(secret))
+            return Error(WincheErrorCode.FailedPrecondition, $"{app.Name} has no Turnstile secret key: set it under Integrity.", "integrity-not-set-up");
+        if (string.IsNullOrWhiteSpace(body.Token) || body.Token.Length > 2048)
+            return Error(WincheErrorCode.InvalidArgument, "The browser check needs the token Turnstile gave (token) and the challenge.", "integrity-proof");
+        if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
+            return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
+        try
+        {
+            await services.GetRequiredService<Turnstile.TurnstileVerifier>().VerifyAsync(body.Token, body.Challenge!, app, secret, http.Connection.RemoteIpAddress?.ToString(), ct);
+        }
+        catch (Turnstile.TurnstileException e) when (e.Retryable)
+        {
+            return Error(WincheErrorCode.Unavailable, $"The browser check couldn't be checked: {e.Message}", "integrity-unavailable");
+        }
+        catch (Turnstile.TurnstileException e) when (e.Reason is "secret" or "testing")
+        {
+            return Error(WincheErrorCode.FailedPrecondition, $"The browser check isn't set up right: {e.Message}", "integrity-not-set-up");
+        }
+        catch (Turnstile.TurnstileException e)
+        {
+            return Error(WincheErrorCode.PermissionDenied, $"The browser check refused it: {e.Message}", "integrity-rejected");
+        }
+        var (token, expires) = integrity.Issue(app.Id, "turnstile");
+        return Results.Json(new { token, expiresAt = expires });
+    }
 
     /// <summary>
     /// Play Integrity (standard API): the challenge is used up, then Google decodes the token (with the project's

@@ -12,7 +12,7 @@ How an app proves itself:
 | Simulators, emulators, desktop builds, CI | a **debug token** made in the console | now |
 | iOS 14+, macOS 11+ | Apple App Attest (`winche_app_attest` for Flutter) | now |
 | Android 6+ (with Google Play) | Google Play Integrity, standard API (`winche_integrity` for Flutter) | now |
-| Web | a browser check | to come |
+| Web | a browser check: Cloudflare Turnstile (`winche_integrity` for Flutter web) | now |
 
 Windows and Linux have no proof an app can give of itself: they use debug tokens.
 
@@ -48,6 +48,8 @@ Winche Server does this for every project; its console's **Integrity** page chan
   Android: the Google Cloud project number Play Integrity runs under, whether builds Google Play doesn't know are
   accepted (`androidSideloaded`, off), how good the device must be (`androidDeviceIntegrity`: `basic`, `device` (the
   default) or `strong`), and optionally the signing certificates (SHA-256, base64url, as Play Console shows them).
+  Web: the Turnstile widget's site key and the sites the app runs on (hostnames; empty: any); its secret key is a
+  project secret, `integrity.apps.<app id>.turnstileSecret`.
 - **Enforcement**, per product: `off` (not checked), `monitor` (the default: checked and counted, never refused) or
   `enforce` (refused without a valid token: `permission-denied`, reason `integrity-required`). Watch the counts in
   monitor first, then enforce once your apps all send tokens.
@@ -81,6 +83,13 @@ with `requestHash` = SHA-256 of the challenge's UTF-8, lower-case hex. The serve
 Console), then checks the request (package, request hash, made within 7 minutes), the app (`PLAY_RECOGNIZED`, or with
 `androidSideloaded` anything but `UNEVALUATED`; the certificate when set) and the device (the app's level). Google being
 down is `integrity-unavailable`; a service account it refuses is `integrity-not-set-up`.
+
+On the web, the challenge's answer carries the app's `webSiteKey`; the browser runs an invisible Turnstile widget
+(explicit render, action `winche-integrity`, cData = the challenge) and sends `{ app, provider: "turnstile",
+challenge, token }`. The server checks it with Cloudflare's siteverify (the app's secret key, the browser's address, an
+idempotency key), then the site (one of the app's hostnames), the action, the cData (this challenge: with the challenge
+single use, a token can't be replayed) and the time. Cloudflare's always-passing test keys are refused. A browser check
+is weaker than App Attest or Play Integrity: it tells a person's browser from a script, not which app is calling.
 
 The app sends the token in `X-Winche-Integrity` (on WebSockets, the query parameter `winche_integrity`) and gets a new
 one before it expires. The Winche SDKs do all of this.

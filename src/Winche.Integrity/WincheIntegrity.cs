@@ -29,6 +29,9 @@ public sealed class WincheIntegrityOptions
 
     /// <summary>How Google is called (tests answer for it).</summary>
     internal HttpClient? PlayIntegrityHttp { get; set; }
+
+    /// <summary>How Cloudflare is called (tests answer for it).</summary>
+    internal HttpClient? TurnstileHttp { get; set; }
 }
 
 /// <summary>
@@ -41,6 +44,9 @@ public sealed class WincheIntegrity(IServiceProvider services, WincheIntegrityOp
 {
     /// <summary>The project secret with the Google service account's key file (JSON), for Play Integrity.</summary>
     public const string PlayServiceAccountSecret = "integrity.playIntegrity.serviceAccount";
+
+    /// <summary>The project secret with an app's Turnstile secret key, for the browser check.</summary>
+    public static string TurnstileSecret(string appId) => $"integrity.apps.{appId}.turnstileSecret";
 
     private const string TokenPrefix = "wit1.", DebugPrefix = "wdt_";
     private readonly TimeProvider _time = time ?? TimeProvider.System;

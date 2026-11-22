@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IntegrityStore>();
         services.TryAddSingleton(sp => new AppAttest.AppAttestVerifier(options.AppAttestRoot, sp.GetService<TimeProvider>()));
         services.TryAddSingleton(sp => new PlayIntegrity.PlayIntegrityVerifier(options.PlayIntegrityHttp, sp.GetService<TimeProvider>()));
+        services.TryAddSingleton(sp => new Turnstile.TurnstileVerifier(options.TurnstileHttp, sp.GetService<TimeProvider>()));
         services.AddWincheSecrets();   // the Google service account
         services.AddHostedService<IntegrityUsageFlusher>();
         return services;
