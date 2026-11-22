@@ -27,15 +27,23 @@ public sealed class WincheIntegrityOptions
     /// <summary>The root App Attest attestations must chain to: Apple's (tests make their own).</summary>
     internal System.Security.Cryptography.X509Certificates.X509Certificate2? AppAttestRoot { get; set; }
 
-    /// <summary>Challenges and proofs each caller's address may ask for a minute (0: no limit). Default 30.</summary>
+    /// <summary>
+    /// Challenges and proofs each caller may ask for a minute (an IPv6 caller counts by its /64; 0: no limit). Default 30.
+    /// </summary>
     public int AttemptsPerMinutePerAddress { get; set; } = 30;
 
     /// <summary>
-    /// Proofs that cost a call to Google or Cloudflare (Play Integrity, Turnstile) per app a minute, from every address
-    /// together, counted only once a challenge was used (0: no limit). Default 600. App Attest and debug tokens are
-    /// checked here, so only the per-address limit applies to them.
+    /// Play Integrity proofs per app a minute, from every caller together, counted once a challenge was used (0: no
+    /// limit). Default 600. Each costs one of the project's daily calls at Google; App Attest, Turnstile and debug tokens
+    /// cost nothing that runs out, so only the per-caller limit applies to them.
     /// </summary>
     public int AttemptsPerMinutePerApp { get; set; } = 600;
+
+    /// <summary>
+    /// Play Integrity proofs per app a day (UTC), to keep some of Google's daily quota for the rest of the project
+    /// (0: no limit, the default). Set it below the quota of the Google Cloud project's Play Integrity API.
+    /// </summary>
+    public int PlayIntegrityPerDayPerApp { get; set; }
 
     /// <summary>How Google is called (tests answer for it).</summary>
     internal HttpClient? PlayIntegrityHttp { get; set; }
@@ -80,7 +88,8 @@ public sealed class WincheIntegrity(IServiceProvider services, WincheIntegrityOp
             var area = Area;
             if (area is null) return new();
             if (area.Source == SettingsSource.Saved || options.CarryOverApps?.Invoke(services) is not { Count: > 0 } apps) return area.Current;
-            return area.Current with { Apps = [.. apps] };
+            // Apps from before Integrity were never checked: only those that pass are used.
+            return area.Current with { Apps = [.. apps.Where(a => !IntegritySettings.ProblemsOf(a).Any())] };
         }
     }
 

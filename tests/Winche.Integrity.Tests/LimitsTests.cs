@@ -28,17 +28,37 @@ public class LimitsTests(PostgresFixture pg)
     }
 
     [Fact]
-    public void An_apps_budget_counts_only_paid_proofs_and_old_minutes_drop()
+    public void Play_proofs_have_an_apps_budget_by_the_minute_and_the_day_and_old_minutes_drop()
     {
         var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.Parse("2026-11-22T10:00:00Z"));
-        var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerApp = 2, AttemptsPerMinutePerAddress = 0 }, clock);
-        Assert.True(limiter.TryTakeAddress("1.2.3.4"));   // no address limit set
-        Assert.True(limiter.TryTakeApp("my-app"));
-        Assert.True(limiter.TryTakeApp("my-app"));
-        Assert.False(limiter.TryTakeApp("my-app"));
-        Assert.True(limiter.TryTakeApp("other-app"));   // each app its own budget
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerApp = 2, PlayIntegrityPerDayPerApp = 3, AttemptsPerMinutePerAddress = 0 }, clock);
+        Assert.True(limiter.TryTakeAddress("1.2.3.4"));   // no caller limit set
+        Assert.True(limiter.TryTakePlay("my-app"));
+        Assert.True(limiter.TryTakePlay("my-app"));
+        Assert.False(limiter.TryTakePlay("my-app"));     // the minute's
+        Assert.True(limiter.TryTakePlay("other-app"));   // each app its own
         clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.True(limiter.TryTakeApp("my-app"));       // a new minute
+        Assert.True(limiter.TryTakePlay("my-app"));
+        Assert.False(limiter.TryTakePlay("my-app"));     // the day's (3)
+        clock.Advance(TimeSpan.FromDays(1));
+        Assert.True(limiter.TryTakePlay("my-app"));
+    }
+
+    [Theory]
+    [InlineData("2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64")]
+    [InlineData("2001:db8:1:2:ffff:1:2:3", "2001:db8:1:2::/64")]
+    [InlineData("::ffff:10.1.2.3", "10.1.2.3")]
+    [InlineData("10.1.2.3", "10.1.2.3")]
+    public void An_IPv6_caller_counts_by_its_64(string address, string caller) => Assert.Equal(caller, IntegrityLimiter.CallerOf(address));
+
+    [Fact]
+    public void Callers_in_one_64_share_a_limit()
+    {
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerAddress = 2 });
+        Assert.True(limiter.TryTakeAddress("2001:db8::1"));
+        Assert.True(limiter.TryTakeAddress("2001:db8::2"));
+        Assert.False(limiter.TryTakeAddress("2001:db8::ffff"));
+        Assert.True(limiter.TryTakeAddress("2001:db8:0:1::1"));   // another /64
     }
 
     [Fact]
@@ -49,6 +69,17 @@ public class LimitsTests(PostgresFixture pg)
         await app.SaveAsync(s => s with { TokenMinutes = 90 });
         var body = await (await app.ExchangeAsync(new { app = "clinic-app", provider = "debug", debugToken = debug })).Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(90 * 60, body.GetProperty("expiresIn").GetInt32());
+    }
+
+    [Fact]
+    public async Task Apps_carried_over_from_before_are_used_only_when_they_pass_the_checks()
+    {
+        await using var app = await TestApp.StartAsync(await pg.NewDatabaseAsync(), configure: o => o.CarryOverApps = _ =>
+        [
+            new IntegrityApp { Id = "good-app", Name = "Good" },
+            new IntegrityApp { Id = "bad-app", Name = "Bad", AndroidPackage = "com.example.bad", AndroidDeviceIntegrity = "great" },
+        ]);
+        Assert.Equal(["good-app"], app.Integrity.Current.Apps.Select(a => a.Id));
     }
 
     [Fact]

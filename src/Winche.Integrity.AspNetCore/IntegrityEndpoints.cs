@@ -137,7 +137,6 @@ public static class IntegrityEndpoints
             return Error(WincheErrorCode.InvalidArgument, "The browser check needs the token Turnstile gave (token) and the challenge.", "integrity-proof");
         if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
             return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
-        if (!LimiterOf(http).TryTakeApp(app.Id)) return TooMany(http);   // a call to Cloudflare: the app's budget
         try
         {
             await services.GetRequiredService<Turnstile.TurnstileVerifier>().VerifyAsync(body.Token, body.Challenge!, app, secret, http.Connection.RemoteIpAddress?.ToString(), ct);
@@ -177,7 +176,7 @@ public static class IntegrityEndpoints
             return Error(WincheErrorCode.InvalidArgument, "Play Integrity needs the token the app got (token) and the challenge.", "integrity-proof");
         if (!await services.GetRequiredService<IntegrityStore>().UseChallengeAsync(app.Id, body.Challenge, ct))
             return Error(WincheErrorCode.PermissionDenied, "The challenge isn't one this project gave, was used already, or expired: ask for a new one.", "integrity-challenge");
-        if (!LimiterOf(http).TryTakeApp(app.Id)) return TooMany(http);   // a call to Google (a daily quota): the app's budget
+        if (!LimiterOf(http).TryTakePlay(app.Id)) return TooMany(http);   // a call to Google (a daily quota): the app's budget
         try
         {
             await services.GetRequiredService<PlayIntegrity.PlayIntegrityVerifier>().VerifyAsync(body.Token, body.Challenge!, app, account, ct);
