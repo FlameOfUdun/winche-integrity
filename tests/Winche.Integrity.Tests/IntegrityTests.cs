@@ -239,9 +239,9 @@ public class IntegrityTests(PostgresFixture pg)
     public async Task Settings_that_cant_work_are_refused_and_apps_carry_over_until_first_saved()
     {
         await using var app = await TestApp.StartAsync(await pg.NewDatabaseAsync(), configure: o =>
-            o.CarryOverApps = _ => [new IntegrityApp { Id = "old-app", Name = "Old", AppleBundleId = "com.example.old", Sdk = "" }]);
+            o.CarryOverApps = _ => [new IntegrityApp { Id = "old-app", Name = "Old", AppleBundleId = "com.example.old" }]);
         Assert.Equal("old-app", Assert.Single(app.Integrity.Current.Apps).Id);
-        Assert.Equal("flutter", app.Integrity.Current.Apps[0].Sdk);
+        Assert.Equal("com.example.old", app.Integrity.Current.Apps[0].AppleBundleId);
         Assert.Equal("monitor", app.Integrity.Current.ModeOf("storage"));
 
         var store = app.Services.GetRequiredService<SettingsStore>();

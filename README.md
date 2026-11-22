@@ -42,7 +42,7 @@ Winche Server does this for every project; its console's **Integrity** page chan
 
 ### Settings (area `integrity`)
 
-- **Apps**: each with an id (it goes in the app's `winche_options.dart`), a name, and what identifies it on each platform:
+- **Apps**: each with an id (it goes in the app's `winche_options.dart`), a name, and what identifies it on each platform (whatever it's built with):
   Android package, Apple bundle id and team id (App Attest needs both), and whether App Attest keys from development
   builds (run from Xcode) are accepted besides TestFlight and App Store ones (`appleDevelopment`, off by default).
   Android: the Google Cloud project number Play Integrity runs under, whether builds Google Play doesn't know are

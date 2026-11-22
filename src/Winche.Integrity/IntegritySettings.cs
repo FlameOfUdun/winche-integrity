@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Winche.Integrity;
 
 /// <summary>
-/// An app of the project: its name, the SDK it's built with, and what identifies it on each platform. Its
+/// An app of the project: its name, and what identifies it on each platform (whatever it's built with). Its
 /// <see cref="Id"/> goes in its <c>winche_options.dart</c>; it proves it's this app (and not a copy or a script) to get
 /// an Integrity token, which it sends with every request.
 /// </summary>
@@ -11,7 +11,6 @@ public sealed record IntegrityApp
 {
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
-    public string Sdk { get; init; } = "flutter";
     /// <summary>Android: the package name (com.example.app), for Play Integrity.</summary>
     public string? AndroidPackage { get; init; }
     /// <summary>Android: the Google Cloud project number Play Integrity asks for (the app gets it with each challenge).</summary>
@@ -61,7 +60,6 @@ public sealed partial record IntegritySettings
 {
     public const string Area = "integrity";
     public const int MaxApps = 100, MaxDebugTokens = 100;
-    public static readonly string[] Sdks = ["flutter"];
 
     /// <summary>The products whose requests Integrity checks.</summary>
     public static readonly string[] Products = ["database", "storage", "authentication", "functions", "assets"];
@@ -107,7 +105,6 @@ public sealed partial record IntegritySettings
     {
         if (string.IsNullOrWhiteSpace(a.Name)) yield return "Name every app.";
         else if (a.Name.Length > 80) yield return $"'{a.Name[..20]}…' is too long a name (80 at most).";
-        if (!Sdks.Contains(a.Sdk)) yield return $"'{a.Sdk}' isn't an SDK Winche has yet.";
         if (a.AndroidPackage is { } pkg && !AndroidPackageRx().IsMatch(pkg)) yield return $"'{pkg}' isn't an Android package name (like com.example.app).";
         if (a.AppleBundleId is { } bundle && !BundleRx().IsMatch(bundle)) yield return $"'{bundle}' isn't a bundle id (like com.example.app).";
         if (a.AppleTeamId is { } team && !TeamRx().IsMatch(team)) yield return $"'{team}' isn't an Apple team id (10 capital letters and digits, like ABCDE12345).";

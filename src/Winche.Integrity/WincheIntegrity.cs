@@ -70,7 +70,7 @@ public sealed class WincheIntegrity(IServiceProvider services, WincheIntegrityOp
             var area = Area;
             if (area is null) return new();
             if (area.Source == SettingsSource.Saved || options.CarryOverApps?.Invoke(services) is not { Count: > 0 } apps) return area.Current;
-            return area.Current with { Apps = [.. apps.Select(a => a with { Sdk = string.IsNullOrEmpty(a.Sdk) ? "flutter" : a.Sdk })] };
+            return area.Current with { Apps = [.. apps] };
         }
     }
 
