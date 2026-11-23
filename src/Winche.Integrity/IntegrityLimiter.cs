@@ -21,6 +21,9 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private long _cleared;
 
+    /// <summary>For tests: the count kept, and the windows there really are.</summary>
+    internal (int Counted, int Windows) Counts => (Volatile.Read(ref _count), _windows.Count);
+
     private sealed class Window(long period) { public readonly long Period = period; public int Count; }
 
     /// <summary>Takes one try for the caller at <paramref name="address"/>: false when it has used up its minute's.</summary>
@@ -68,7 +71,24 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
 
     private bool Take(string key, long period, long limit)
     {
-        var window = _windows.AddOrUpdate(key, _ => { Interlocked.Increment(ref _count); return new Window(period); }, (_, w) => w.Period == period ? w : new Window(period));
-        return Interlocked.Increment(ref window.Count) <= limit;
+        // Counted only when a window is really added (AddOrUpdate may run its add more than once for one key).
+        while (true)
+        {
+            if (_windows.TryGetValue(key, out var window))
+            {
+                if (window.Period == period) return Interlocked.Increment(ref window.Count) <= limit;
+                var next = new Window(period);
+                if (_windows.TryUpdate(key, next, window)) return Interlocked.Increment(ref next.Count) <= limit;
+            }
+            else
+            {
+                var added = new Window(period);
+                if (_windows.TryAdd(key, added))
+                {
+                    Interlocked.Increment(ref _count);
+                    return Interlocked.Increment(ref added.Count) <= limit;
+                }
+            }
+        }
     }
 }

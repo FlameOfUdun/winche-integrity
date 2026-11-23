@@ -109,4 +109,15 @@ public class LimitsTests(PostgresFixture pg)
     [InlineData("/.well-known/openid-configuration", "GET", true)]
     public void Only_these_addresses_go_without_a_token(string path, string method, bool exempt) =>
         Assert.Equal(exempt, IntegrityEndpoints.IsExempt(new PathString(path), method));
+
+    [Fact]
+    public void The_caller_count_matches_the_windows_however_many_ask_at_once()
+    {
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions());
+        // Many callers new this minute, each asking from several threads at the same moment.
+        for (var round = 0; round < 20; round++)
+            Parallel.For(0, 4000, new ParallelOptions { MaxDegreeOfParallelism = 16 }, i => limiter.TryTakeAddress($"10.{round}.{i / 8 / 250}.{i / 8 % 250}"));
+        var (counted, windows) = limiter.Counts;
+        Assert.Equal(windows, counted);
+    }
 }
