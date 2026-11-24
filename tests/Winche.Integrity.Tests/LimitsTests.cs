@@ -120,4 +120,13 @@ public class LimitsTests(PostgresFixture pg)
         var (counted, windows) = limiter.Counts;
         Assert.Equal(windows, counted);
     }
+
+    [Fact]
+    public void Realtime_is_a_product_Integrity_can_enforce_on()
+    {
+        var app = new IntegrityApp { Id = "a-1", Name = "A" };
+        var settings = new IntegritySettings { Apps = [app], Enforcement = new Dictionary<string, string> { ["realtime"] = "enforce" } };
+        Assert.DoesNotContain(settings.Problems(), p => p.Contains("isn't a product"));
+        Assert.Equal("enforce", settings.ModeOf("realtime"));
+    }
 }

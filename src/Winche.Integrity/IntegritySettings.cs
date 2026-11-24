@@ -62,7 +62,7 @@ public sealed partial record IntegritySettings
     public const int MaxApps = 100, MaxDebugTokens = 100;
 
     /// <summary>The products whose requests Integrity checks.</summary>
-    public static readonly string[] Products = ["database", "storage", "authentication", "functions", "assets"];
+    public static readonly string[] Products = ["database", "storage", "authentication", "functions", "assets", "realtime"];
 
     /// <summary>
     /// Not checked (<c>off</c>); checked and counted, never refused (<c>monitor</c>, the default); refused without a
@@ -72,7 +72,7 @@ public sealed partial record IntegritySettings
 
     public IReadOnlyList<IntegrityApp> Apps { get; init; } = [];
 
-    /// <summary>Each product's mode (database, storage, authentication, functions, assets); missing: <c>monitor</c>.</summary>
+    /// <summary>Each product's mode (database, storage, authentication, functions, assets, realtime); missing: <c>monitor</c>.</summary>
     public IReadOnlyDictionary<string, string> Enforcement { get; init; } = new Dictionary<string, string>();
 
     /// <summary>How long an Integrity token lasts: 30 minutes to 24 hours.</summary>
