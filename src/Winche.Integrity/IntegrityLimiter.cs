@@ -33,8 +33,10 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
         if (limit <= 0) return true;
         var minute = Minute();
         var key = "ip:" + CallerOf(address);
-        // Past the cap, callers not yet counted share one window with room for many of them.
-        if (Volatile.Read(ref _count) >= MaxCallers && !_windows.ContainsKey(key)) return Take("ip:overflow", minute, (long)limit * 1000);
+        // Past the cap, callers not yet counted share a window by their network (an IPv6 /48, an IPv4 /16), with room
+        // for many of them: one network's many addresses fill only its own. Past twice the cap, one window for all.
+        if (Volatile.Read(ref _count) >= MaxCallers && !_windows.ContainsKey(key))
+            return Take(Volatile.Read(ref _count) >= 2 * MaxCallers ? "ip:overflow" : "ip:overflow:" + NetworkOf(address), minute, (long)limit * 1000);
         return Take(key, minute, limit);
     }
 
@@ -57,6 +59,17 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
         return new IPAddress(bytes) + "/64";
     }
 
+    /// <summary>A caller's wider network: an IPv6 address's /48, an IPv4 one's /16.</summary>
+    internal static string NetworkOf(string? address)
+    {
+        if (address is null || !IPAddress.TryParse(address, out var ip)) return "unknown";
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        var bytes = ip.GetAddressBytes();
+        var kept = ip.AddressFamily == AddressFamily.InterNetworkV6 ? 6 : 2;
+        Array.Clear(bytes, kept, bytes.Length - kept);
+        return new IPAddress(bytes) + (kept == 6 ? "/48" : "/16");
+    }
+
     private long Minute()
     {
         var minute = _time.GetUtcNow().ToUnixTimeSeconds() / 60;
@@ -69,14 +82,15 @@ public sealed class IntegrityLimiter(WincheIntegrityOptions options, TimeProvide
         return minute;
     }
 
-    private bool Take(string key, long period, long limit)
+    internal bool Take(string key, long period, long limit)
     {
         // Counted only when a window is really added (AddOrUpdate may run its add more than once for one key).
         while (true)
         {
             if (_windows.TryGetValue(key, out var window))
             {
-                if (window.Period == period) return Interlocked.Increment(ref window.Count) <= limit;
+                // A newer window (another try saw the minute turn first) is never replaced by an older one: counted there.
+                if (window.Period >= period) return Interlocked.Increment(ref window.Count) <= limit;
                 var next = new Window(period);
                 if (_windows.TryUpdate(key, next, window)) return Interlocked.Increment(ref next.Count) <= limit;
             }

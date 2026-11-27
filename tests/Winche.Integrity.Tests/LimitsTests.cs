@@ -52,6 +52,31 @@ public class LimitsTests(PostgresFixture pg)
     public void An_IPv6_caller_counts_by_its_64(string address, string caller) => Assert.Equal(caller, IntegrityLimiter.CallerOf(address));
 
     [Fact]
+    public void A_try_that_read_the_clock_before_the_minute_turned_counts_in_the_new_minute_never_resetting_it()
+    {
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions());
+        Assert.True(limiter.Take("ip:x", period: 5, limit: 2));
+        Assert.True(limiter.Take("ip:x", period: 5, limit: 2));
+        // A late try still holding minute 4: counted against minute 5's window, not starting minute 4's over.
+        Assert.False(limiter.Take("ip:x", period: 4, limit: 2));
+        Assert.False(limiter.Take("ip:x", period: 5, limit: 2));
+    }
+
+    [Fact]
+    public void Past_the_cap_new_callers_share_a_window_by_their_network_so_one_network_cant_fill_everyones()
+    {
+        var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerAddress = 1 });
+        for (var i = 0; i < IntegrityLimiter.MaxCallers; i++) Assert.True(limiter.TryTakeAddress($"10.{i >> 16 & 255}.{i >> 8 & 255}.{i & 255}"));
+        // One /48's many /64s use up its shared window…
+        var taken = 0;
+        for (var i = 0; i < 2000; i++) if (limiter.TryTakeAddress($"2001:db8:1:{i:x}::1")) taken++;
+        Assert.Equal(1000, taken);
+        // …and a caller elsewhere still gets in.
+        Assert.True(limiter.TryTakeAddress("2001:db8:2:1::1"));
+        Assert.True(limiter.TryTakeAddress("192.0.2.7"));
+    }
+
+    [Fact]
     public void Callers_in_one_64_share_a_limit()
     {
         var limiter = new IntegrityLimiter(new WincheIntegrityOptions { AttemptsPerMinutePerAddress = 2 });
